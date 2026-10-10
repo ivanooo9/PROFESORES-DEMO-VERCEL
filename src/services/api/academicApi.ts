@@ -15,10 +15,21 @@ import {
   AttendanceReportDTO,
   GradeReportDTO,
   StudentReportDTO,
+  AcademicYear,
+  AcademicYearStatus,
+  AcademicPeriod,
+  AcademicPeriodType,
+  AcademicPeriodStatus,
+  AcademicEvaluationScheme,
+  AcademicEvaluationCategory,
+  AcademicGradeStatus,
+  PeriodGradesMatrixDTO,
+  PeriodClosureReadinessDTO,
+  CourseDependenciesDTO,
 } from '../../types/teacher';
 import { academicDemoService } from '../../demo/academicDemoService';
 
-const isDemo = import.meta.env.VITE_DEMO_MODE === 'true';
+const isDemo = import.meta.env.VITE_DEMO_MODE !== 'false';
 
 function mapCourse(raw: any): Course {
   return {
@@ -42,6 +53,9 @@ function mapSubject(raw: any): Subject {
     courseName: raw.course ? raw.course.name : '',
     teacherName: raw.teacherUser ? raw.teacherUser.name : 'Sin asignar',
     hoursPerWeek: raw.hoursPerWeek ?? 0,
+    scheduleStatus: raw.scheduleStatus,
+    totalPedagogicalHours: raw.totalPedagogicalHours,
+    activeSlots: raw.activeSlots,
   };
 }
 
@@ -66,6 +80,8 @@ function mapEnrollment(raw: any): Enrollment {
     id: String(raw.id),
     studentId: String(raw.studentId),
     courseId: String(raw.courseId),
+    academicYearId: raw.academicYearId ? String(raw.academicYearId) : undefined,
+    academicYearName: raw.academicYear ? raw.academicYear.name : undefined,
     status: raw.status?.toLowerCase() === 'active' ? 'active' : 'inactive',
     enrollmentDate: raw.enrollmentDate
       ? new Date(raw.enrollmentDate).toISOString().split('T')[0]
@@ -135,6 +151,10 @@ function mapActivity(raw: any): Activity {
     type: typeLower,
     date: dateStr,
     maxScore: typeof raw.maxScore === 'number' ? raw.maxScore : Number(raw.maxScore),
+    academicPeriodId: raw.academicPeriodId ? String(raw.academicPeriodId) : undefined,
+    evaluationSchemeId: raw.evaluationSchemeId ? String(raw.evaluationSchemeId) : undefined,
+    categoryId: raw.categoryId ? String(raw.categoryId) : undefined,
+    categoryName: raw.category ? raw.category.name : undefined,
   };
 }
 
@@ -302,6 +322,44 @@ export const academicApi = {
     }
   },
 
+  async reactivateCourse(orgId: number, courseId: number | string): Promise<Course> {
+    if (isDemo) {
+      return academicDemoService.reactivateCourse(orgId, courseId);
+    }
+    const response = await apiClient.patch<any>(
+      `/api/organizations/${orgId}/academic/courses/${courseId}/reactivate`
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al reactivar curso.');
+    }
+    return mapCourse(response.data);
+  },
+
+  async getCourseDependencies(orgId: number, courseId: number | string): Promise<CourseDependenciesDTO> {
+    if (isDemo) {
+      return academicDemoService.getCourseDependencies(orgId, courseId);
+    }
+    const response = await apiClient.get<CourseDependenciesDTO>(
+      `/api/organizations/${orgId}/academic/courses/${courseId}/dependencies`
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al consultar dependencias del curso.');
+    }
+    return response.data;
+  },
+
+  async deleteCourse(orgId: number, courseId: number | string): Promise<void> {
+    if (isDemo) {
+      return academicDemoService.deleteCourse(orgId, courseId);
+    }
+    const response = await apiClient.delete(
+      `/api/organizations/${orgId}/academic/courses/${courseId}`
+    );
+    if (!response.success) {
+      throw new Error(response.error || 'Error al eliminar curso.');
+    }
+  },
+
   // ============================================================================
   // ASIGNATURAS / MATERIAS
   // ============================================================================
@@ -325,7 +383,22 @@ export const academicApi = {
   async createSubject(
     orgId: number,
     courseId: number | string,
-    data: { name: string; code?: string; hoursPerWeek?: number | null; teacherUserId?: number | null }
+    data: {
+      name: string;
+      code?: string;
+      hoursPerWeek?: number | null;
+      teacherUserId?: number | null;
+      academicYearId?: number;
+      effectiveFrom?: string;
+      scheduleSlots?: Array<{
+        dayOfWeek: number;
+        startTime: string;
+        endTime: string;
+        pedagogicalHours?: number;
+        room?: string;
+        teacherUserId?: string | number;
+      }>;
+    }
   ): Promise<Subject> {
     if (isDemo) {
       return academicDemoService.createSubject(orgId, courseId, data);
@@ -343,7 +416,22 @@ export const academicApi = {
   async updateSubject(
     orgId: number,
     subjectId: number | string,
-    data: { name?: string; code?: string; hoursPerWeek?: number | null; teacherUserId?: number | null }
+    data: {
+      name?: string;
+      code?: string;
+      hoursPerWeek?: number | null;
+      teacherUserId?: number | null;
+      academicYearId?: number;
+      effectiveFrom?: string;
+      scheduleSlots?: Array<{
+        dayOfWeek: number;
+        startTime: string;
+        endTime: string;
+        pedagogicalHours?: number;
+        room?: string;
+        teacherUserId?: string | number;
+      }>;
+    }
   ): Promise<Subject> {
     if (isDemo) {
       return academicDemoService.updateSubject(orgId, subjectId, data);
@@ -368,6 +456,83 @@ export const academicApi = {
     if (!response.success) {
       throw new Error(response.error || 'Error al inactivar materia.');
     }
+  },
+
+  // ============================================================================
+  // HORARIOS SEMANALES
+  // ============================================================================
+
+  async getSubjectSchedule(
+    orgId: number,
+    subjectId: number | string,
+    options?: { effectiveDate?: string; includeHistory?: boolean }
+  ): Promise<any> {
+    if (isDemo) {
+      return academicDemoService.getSubjectSchedule(orgId, subjectId, options);
+    }
+    const params = new URLSearchParams();
+    if (options?.effectiveDate) params.append('effectiveDate', options.effectiveDate);
+    if (options?.includeHistory) params.append('includeHistory', 'true');
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const response = await apiClient.get<any>(
+      `/api/organizations/${orgId}/academic/subjects/${subjectId}/schedule${query}`
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al obtener horario de la materia.');
+    }
+    return response.data;
+  },
+
+  async saveSubjectSchedule(
+    orgId: number,
+    subjectId: number | string,
+    data: {
+      academicYearId?: number | string;
+      effectiveFrom?: string;
+      slots: Array<{
+        dayOfWeek: number;
+        startTime: string;
+        endTime: string;
+        pedagogicalHours?: number;
+        room?: string | null;
+        teacherUserId?: number | null;
+      }>;
+    }
+  ): Promise<any> {
+    if (isDemo) {
+      return academicDemoService.saveSubjectSchedule(orgId, subjectId, data);
+    }
+    const response = await apiClient.put<any>(
+      `/api/organizations/${orgId}/academic/subjects/${subjectId}/schedule`,
+      data
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al guardar horario de la materia.');
+    }
+    return response.data;
+  },
+
+  async getCourseSchedule(
+    orgId: number,
+    courseId: number | string,
+    options?: { academicYearId?: number | string; effectiveDate?: string }
+  ): Promise<any> {
+    if (isDemo) {
+      return academicDemoService.getCourseSchedule(orgId, courseId, options);
+    }
+    const params = new URLSearchParams();
+    if (options?.academicYearId) params.append('academicYearId', String(options.academicYearId));
+    if (options?.effectiveDate) params.append('effectiveDate', options.effectiveDate);
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const response = await apiClient.get<any>(
+      `/api/organizations/${orgId}/academic/courses/${courseId}/schedule${query}`
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al consultar horario del curso.');
+    }
+    return response.data;
   },
 
   // ============================================================================
@@ -502,17 +667,19 @@ export const academicApi = {
     orgId: number,
     studentId: number | string,
     courseId: number | string,
-    period?: string | null
+    period?: string | null,
+    academicYearId?: number | string | null
   ): Promise<Enrollment> {
     if (isDemo) {
-      return academicDemoService.enrollStudent(orgId, studentId, courseId, period);
+      return academicDemoService.enrollStudent(orgId, studentId, courseId, period, academicYearId);
     }
     const response = await apiClient.post<any>(
       `/api/organizations/${orgId}/academic/enrollments`,
       {
         studentId: Number(studentId),
         courseId: Number(courseId),
-        period,
+        period: period || undefined,
+        academicYearId: academicYearId ? Number(academicYearId) : undefined,
       }
     );
     if (!response.success || !response.data) {
@@ -540,7 +707,7 @@ export const academicApi = {
   },
 
   // ============================================================================
-  // SESIONES DE CLASE (FASE 2)
+  // SESIONES DE CLASE
   // ============================================================================
 
   async getSessions(
@@ -663,7 +830,7 @@ export const academicApi = {
   },
 
   // ============================================================================
-  // REGISTRO Y CONTROL DE ASISTENCIA (FASE 2)
+  // REGISTRO Y CONTROL DE ASISTENCIA
   // ============================================================================
 
   async saveAttendanceBatch(
@@ -690,6 +857,34 @@ export const academicApi = {
     }
 
     return response.data.map(mapAttendanceRecord);
+  },
+
+  async rectifyAttendanceBatch(
+    orgId: number,
+    sessionId: number | string,
+    records: { studentId: number | string; status: AttendanceStatus; observation?: string | null }[],
+    reason: string
+  ): Promise<any> {
+    if (isDemo) {
+      return academicDemoService.rectifyAttendanceBatch(orgId, sessionId, records, reason);
+    }
+    const response = await apiClient.post<any>(
+      `/api/organizations/${orgId}/academic/sessions/${sessionId}/attendance/rectify`,
+      {
+        records: records.map((r) => ({
+          studentId: Number(r.studentId),
+          status: r.status,
+          observation: r.observation || null,
+        })),
+        reason,
+      }
+    );
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al rectificar asistencia.');
+    }
+
+    return response.data;
   },
 
   async getAttendanceBySession(
@@ -759,7 +954,7 @@ export const academicApi = {
   },
 
   // ============================================================================
-  // ACTIVIDADES Y EVALUACIONES (FASE 3)
+  // ACTIVIDADES Y EVALUACIONES
   // ============================================================================
 
   async getActivities(
@@ -819,6 +1014,9 @@ export const academicApi = {
       dueDate?: string | null;
       maxScore: number;
       teacherUserId?: number | string | null;
+      academicPeriodId?: number | string | null;
+      evaluationSchemeId?: number | string | null;
+      categoryId?: number | string | null;
     }
   ): Promise<Activity> {
     if (isDemo) {
@@ -831,6 +1029,9 @@ export const academicApi = {
         subjectId: Number(data.subjectId),
         maxScore: Number(data.maxScore),
         teacherUserId: data.teacherUserId ? Number(data.teacherUserId) : null,
+        academicPeriodId: data.academicPeriodId ? Number(data.academicPeriodId) : null,
+        evaluationSchemeId: data.evaluationSchemeId ? Number(data.evaluationSchemeId) : null,
+        categoryId: data.categoryId ? Number(data.categoryId) : null,
       }
     );
     if (!response.success || !response.data) {
@@ -849,6 +1050,9 @@ export const academicApi = {
       dueDate?: string | null;
       maxScore?: number;
       teacherUserId?: number | string | null;
+      academicPeriodId?: number | string | null;
+      evaluationSchemeId?: number | string | null;
+      categoryId?: number | string | null;
     }
   ): Promise<Activity> {
     if (isDemo) {
@@ -860,6 +1064,9 @@ export const academicApi = {
         ...data,
         maxScore: data.maxScore !== undefined ? Number(data.maxScore) : undefined,
         teacherUserId: data.teacherUserId !== undefined ? (data.teacherUserId ? Number(data.teacherUserId) : null) : undefined,
+        academicPeriodId: data.academicPeriodId !== undefined ? (data.academicPeriodId ? Number(data.academicPeriodId) : null) : undefined,
+        evaluationSchemeId: data.evaluationSchemeId !== undefined ? (data.evaluationSchemeId ? Number(data.evaluationSchemeId) : null) : undefined,
+        categoryId: data.categoryId !== undefined ? (data.categoryId ? Number(data.categoryId) : null) : undefined,
       }
     );
     if (!response.success || !response.data) {
@@ -869,23 +1076,33 @@ export const academicApi = {
   },
 
   // ============================================================================
-  // CALIFICACIONES Y EVALUACIONES (FASE 3)
+  // CALIFICACIONES Y EVALUACIONES
   // ============================================================================
 
   async saveGradesBatch(
     orgId: number,
     activityId: number | string,
-    grades: { studentId: number | string; score: number; comments?: string | null }[]
+    grades: {
+      studentId?: number | string;
+      enrollmentId?: number | string;
+      score?: number | null;
+      status?: AcademicGradeStatus | string;
+      comments?: string | null;
+    }[],
+    reason?: string | null
   ): Promise<GradeItem[]> {
     if (isDemo) {
-      return academicDemoService.saveGradesBatch(orgId, activityId, grades);
+      return academicDemoService.saveGradesBatch(orgId, activityId, grades, reason);
     }
     const response = await apiClient.post<any[]>(
       `/api/organizations/${orgId}/academic/activities/${activityId}/grades`,
       {
+        reason: reason || null,
         grades: grades.map((g) => ({
-          studentId: Number(g.studentId),
-          score: Number(g.score),
+          studentId: g.studentId ? Number(g.studentId) : undefined,
+          enrollmentId: g.enrollmentId ? Number(g.enrollmentId) : undefined,
+          score: g.score !== undefined && g.score !== null ? Number(g.score) : null,
+          status: g.status,
           comments: g.comments || null,
         })),
       }
@@ -999,7 +1216,7 @@ export const academicApi = {
   },
 
   // ============================================================================
-  // REPORTES ACADÉMICOS REALES (FASE 5)
+  // REPORTES ACADÉMICOS
   // ============================================================================
 
   async getRosterReport(
@@ -1036,14 +1253,8 @@ export const academicApi = {
     if (isDemo) {
       return academicDemoService.getAttendanceReport(orgId, filter);
     }
-    const params = new URLSearchParams();
-    if (filter?.courseId) params.append('courseId', String(filter.courseId));
-    if (filter?.subjectId) params.append('subjectId', String(filter.subjectId));
-    if (filter?.studentId) params.append('studentId', String(filter.studentId));
-    if (filter?.from) params.append('from', filter.from);
-    if (filter?.to) params.append('to', filter.to);
-
-    const query = params.toString() ? `?${params.toString()}` : '';
+    const params = recklessSearchParams(filter);
+    const query = params ? `?${params}` : '';
     const response = await apiClient.get<AttendanceReportDTO>(
       `/api/organizations/${orgId}/academic/reports/attendance${query}`
     );
@@ -1089,4 +1300,465 @@ export const academicApi = {
     }
     return response.data;
   },
+
+  // ============================================================================
+  // AÑOS LECTIVOS (AcademicYear)
+  // ============================================================================
+
+  async getAcademicYears(
+    orgId: number,
+    filter?: { status?: string; search?: string }
+  ): Promise<AcademicYear[]> {
+    if (isDemo) {
+      return academicDemoService.getAcademicYears(orgId, filter);
+    }
+    const params = new URLSearchParams();
+    if (filter?.status) params.append('status', filter.status);
+    if (filter?.search) params.append('search', filter.search);
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const response = await apiClient.get<AcademicYear[]>(
+      `/api/organizations/${orgId}/academic/years${query}`
+    );
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al obtener años lectivos.');
+    }
+
+    return response.data;
+  },
+
+  async getAcademicYearById(orgId: number, yearId: number | string): Promise<AcademicYear> {
+    if (isDemo) {
+      return academicDemoService.getAcademicYearById(orgId, yearId);
+    }
+    const response = await apiClient.get<AcademicYear>(
+      `/api/organizations/${orgId}/academic/years/${yearId}`
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Año lectivo no encontrado.');
+    }
+    return response.data;
+  },
+
+  async createAcademicYear(
+    orgId: number,
+    data: { name: string; startDate: string; endDate: string; status?: AcademicYearStatus }
+  ): Promise<AcademicYear> {
+    if (isDemo) {
+      return academicDemoService.createAcademicYear(orgId, data);
+    }
+    const response = await apiClient.post<AcademicYear>(
+      `/api/organizations/${orgId}/academic/years`,
+      data
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al crear año lectivo.');
+    }
+    return response.data;
+  },
+
+  async updateAcademicYear(
+    orgId: number,
+    yearId: number | string,
+    data: { name?: string; startDate?: string; endDate?: string; status?: AcademicYearStatus }
+  ): Promise<AcademicYear> {
+    if (isDemo) {
+      return academicDemoService.updateAcademicYear(orgId, yearId, data);
+    }
+    const response = await apiClient.put<AcademicYear>(
+      `/api/organizations/${orgId}/academic/years/${yearId}`,
+      data
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al actualizar año lectivo.');
+    }
+    return response.data;
+  },
+
+  async changeAcademicYearStatus(
+    orgId: number,
+    yearId: number | string,
+    status: AcademicYearStatus
+  ): Promise<AcademicYear> {
+    if (isDemo) {
+      return academicDemoService.changeAcademicYearStatus(orgId, yearId, status);
+    }
+    const response = await apiClient.patch<AcademicYear>(
+      `/api/organizations/${orgId}/academic/years/${yearId}/status`,
+      { status }
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al cambiar estado del año lectivo.');
+    }
+    return response.data;
+  },
+
+  // ============================================================================
+  // PERIODOS ACADÉMICOS (AcademicPeriod)
+  // ============================================================================
+
+  async getAcademicPeriods(
+    orgId: number,
+    filter?: { academicYearId?: number | string; status?: string; parentId?: number | string }
+  ): Promise<AcademicPeriod[]> {
+    if (isDemo) {
+      return academicDemoService.getAcademicPeriods(orgId, filter);
+    }
+    const params = new URLSearchParams();
+    if (filter?.academicYearId) params.append('academicYearId', String(filter.academicYearId));
+    if (filter?.status) params.append('status', filter.status);
+    if (filter?.parentId) params.append('parentId', String(filter.parentId));
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const response = await apiClient.get<AcademicPeriod[]>(
+      `/api/organizations/${orgId}/academic/periods${query}`
+    );
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al obtener periodos académicos.');
+    }
+
+    return response.data;
+  },
+
+  async getAcademicPeriodById(orgId: number, periodId: number | string): Promise<AcademicPeriod> {
+    if (isDemo) {
+      return academicDemoService.getAcademicPeriodById(orgId, periodId);
+    }
+    const response = await apiClient.get<AcademicPeriod>(
+      `/api/organizations/${orgId}/academic/periods/${periodId}`
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Periodo académico no encontrado.');
+    }
+    return response.data;
+  },
+
+  async createAcademicPeriod(
+    orgId: number,
+    data: {
+      academicYearId: number | string;
+      parentId?: number | string | null;
+      name: string;
+      type: AcademicPeriodType;
+      order?: number;
+      startDate: string;
+      endDate: string;
+      status?: AcademicPeriodStatus;
+    }
+  ): Promise<AcademicPeriod> {
+    if (isDemo) {
+      return academicDemoService.createAcademicPeriod(orgId, data);
+    }
+    const response = await apiClient.post<AcademicPeriod>(
+      `/api/organizations/${orgId}/academic/periods`,
+      {
+        ...data,
+        academicYearId: Number(data.academicYearId),
+        parentId: data.parentId ? Number(data.parentId) : null,
+      }
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al crear periodo académico.');
+    }
+    return response.data;
+  },
+
+  async updateAcademicPeriod(
+    orgId: number,
+    periodId: number | string,
+    data: {
+      name?: string;
+      type?: AcademicPeriodType;
+      order?: number;
+      startDate?: string;
+      endDate?: string;
+      parentId?: number | string | null;
+      status?: AcademicPeriodStatus;
+    }
+  ): Promise<AcademicPeriod> {
+    if (isDemo) {
+      return academicDemoService.updateAcademicPeriod(orgId, periodId, data);
+    }
+    const response = await apiClient.put<AcademicPeriod>(
+      `/api/organizations/${orgId}/academic/periods/${periodId}`,
+      {
+        ...data,
+        parentId: data.parentId !== undefined ? (data.parentId ? Number(data.parentId) : null) : undefined,
+      }
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al actualizar periodo académico.');
+    }
+    return response.data;
+  },
+
+  async changeAcademicPeriodStatus(
+    orgId: number,
+    periodId: number | string,
+    status: AcademicPeriodStatus
+  ): Promise<AcademicPeriod> {
+    if (isDemo) {
+      return academicDemoService.changeAcademicPeriodStatus(orgId, periodId, status);
+    }
+    const response = await apiClient.patch<AcademicPeriod>(
+      `/api/organizations/${orgId}/academic/periods/${periodId}/status`,
+      { status }
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al cambiar estado del periodo académico.');
+    }
+    return response.data;
+  },
+
+  async getPeriodClosureReadiness(
+    orgId: number,
+    periodId: number | string
+  ): Promise<PeriodClosureReadinessDTO> {
+    if (isDemo) {
+      return academicDemoService.getPeriodClosureReadiness(orgId, periodId);
+    }
+    const response = await apiClient.get<PeriodClosureReadinessDTO>(
+      `/api/organizations/${orgId}/academic/periods/${periodId}/closure-readiness`
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al obtener la verificación de cierre del periodo.');
+    }
+    return response.data;
+  },
+
+  // ============================================================================
+  // ESQUEMAS DE EVALUACIÓN (AcademicEvaluationScheme)
+  // ============================================================================
+
+  async getEvaluationSchemes(
+    orgId: number,
+    filter?: { courseId?: number | string; subjectId?: number | string; academicPeriodId?: number | string }
+  ): Promise<AcademicEvaluationScheme[]> {
+    if (isDemo) {
+      return academicDemoService.getEvaluationSchemes(orgId, filter);
+    }
+    const params = new URLSearchParams();
+    if (filter?.courseId) params.append('courseId', String(filter.courseId));
+    if (filter?.subjectId) params.append('subjectId', String(filter.subjectId));
+    if (filter?.academicPeriodId) params.append('academicPeriodId', String(filter.academicPeriodId));
+
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const response = await apiClient.get<AcademicEvaluationScheme[]>(
+      `/api/organizations/${orgId}/academic/evaluation-schemes${query}`
+    );
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al obtener esquemas de evaluación.');
+    }
+
+    return response.data;
+  },
+
+  async getEvaluationSchemeById(orgId: number, schemeId: number | string): Promise<AcademicEvaluationScheme> {
+    if (isDemo) {
+      return academicDemoService.getEvaluationSchemeById(orgId, schemeId);
+    }
+    const response = await apiClient.get<AcademicEvaluationScheme>(
+      `/api/organizations/${orgId}/academic/evaluation-schemes/${schemeId}`
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Esquema de evaluación no encontrado.');
+    }
+    return response.data;
+  },
+
+  async createEvaluationScheme(
+    orgId: number,
+    data: {
+      courseId: number | string;
+      subjectId: number | string;
+      academicPeriodId: number | string;
+      maxScale?: number;
+      minPassingScore?: number;
+    }
+  ): Promise<AcademicEvaluationScheme> {
+    if (isDemo) {
+      return academicDemoService.createEvaluationScheme(orgId, data);
+    }
+    const response = await apiClient.post<AcademicEvaluationScheme>(
+      `/api/organizations/${orgId}/academic/evaluation-schemes`,
+      {
+        courseId: Number(data.courseId),
+        subjectId: Number(data.subjectId),
+        academicPeriodId: Number(data.academicPeriodId),
+        maxScale: data.maxScale !== undefined ? Number(data.maxScale) : undefined,
+        minPassingScore: data.minPassingScore !== undefined ? Number(data.minPassingScore) : undefined,
+      }
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al crear esquema de evaluación.');
+    }
+    return response.data;
+  },
+
+  async updateEvaluationScheme(
+    orgId: number,
+    schemeId: number | string,
+    data: { maxScale?: number; minPassingScore?: number }
+  ): Promise<AcademicEvaluationScheme> {
+    if (isDemo) {
+      return academicDemoService.updateEvaluationScheme(orgId, schemeId, data);
+    }
+    const response = await apiClient.put<AcademicEvaluationScheme>(
+      `/api/organizations/${orgId}/academic/evaluation-schemes/${schemeId}`,
+      data
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al actualizar esquema de evaluación.');
+    }
+    return response.data;
+  },
+
+  async validateEvaluationScheme(orgId: number, schemeId: number | string): Promise<AcademicEvaluationScheme> {
+    if (isDemo) {
+      return academicDemoService.validateEvaluationScheme(orgId, schemeId);
+    }
+    const response = await apiClient.post<AcademicEvaluationScheme>(
+      `/api/organizations/${orgId}/academic/evaluation-schemes/${schemeId}/validate`,
+      {}
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al validar esquema de evaluación.');
+    }
+    return response.data;
+  },
+
+  async lockEvaluationScheme(orgId: number, schemeId: number | string): Promise<AcademicEvaluationScheme> {
+    if (isDemo) {
+      return academicDemoService.lockEvaluationScheme(orgId, schemeId);
+    }
+    const response = await apiClient.patch<AcademicEvaluationScheme>(
+      `/api/organizations/${orgId}/academic/evaluation-schemes/${schemeId}/lock`,
+      {}
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al bloquear esquema de evaluación.');
+    }
+    return response.data;
+  },
+
+  async closeEvaluationScheme(orgId: number, schemeId: number | string): Promise<AcademicEvaluationScheme> {
+    if (isDemo) {
+      return academicDemoService.closeEvaluationScheme(orgId, schemeId);
+    }
+    const response = await apiClient.patch<AcademicEvaluationScheme>(
+      `/api/organizations/${orgId}/academic/evaluation-schemes/${schemeId}/close`,
+      {}
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al cerrar esquema de evaluación.');
+    }
+    return response.data;
+  },
+
+  // ============================================================================
+  // CATEGORÍAS DE EVALUACIÓN (AcademicEvaluationCategory)
+  // ============================================================================
+
+  async createEvaluationCategory(
+    orgId: number,
+    schemeId: number | string,
+    data: { name: string; weightPercentage: number; order?: number }
+  ): Promise<AcademicEvaluationCategory> {
+    if (isDemo) {
+      return academicDemoService.createEvaluationCategory(orgId, schemeId, data);
+    }
+    const response = await apiClient.post<AcademicEvaluationCategory>(
+      `/api/organizations/${orgId}/academic/evaluation-schemes/${schemeId}/categories`,
+      {
+        name: data.name,
+        weightPercentage: Number(data.weightPercentage),
+        order: data.order !== undefined ? Number(data.order) : undefined,
+      }
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al crear categoría de evaluación.');
+    }
+    return response.data;
+  },
+
+  async updateEvaluationCategory(
+    orgId: number,
+    categoryId: number | string,
+    data: { name?: string; weightPercentage?: number; order?: number }
+  ): Promise<AcademicEvaluationCategory> {
+    if (isDemo) {
+      return academicDemoService.updateEvaluationCategory(orgId, categoryId, data);
+    }
+    const response = await apiClient.put<AcademicEvaluationCategory>(
+      `/api/organizations/${orgId}/academic/categories/${categoryId}`,
+      {
+        ...data,
+        weightPercentage: data.weightPercentage !== undefined ? Number(data.weightPercentage) : undefined,
+        order: data.order !== undefined ? Number(data.order) : undefined,
+      }
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al actualizar categoría de evaluación.');
+    }
+    return response.data;
+  },
+
+  async deleteEvaluationCategory(orgId: number, categoryId: number | string): Promise<void> {
+    if (isDemo) {
+      return academicDemoService.deleteEvaluationCategory(orgId, categoryId);
+    }
+    const response = await apiClient.delete(
+      `/api/organizations/${orgId}/academic/categories/${categoryId}`
+    );
+    if (!response.success) {
+      throw new Error(response.error || 'Error al eliminar categoría de evaluación.');
+    }
+  },
+
+  // ============================================================================
+  // MATRIZ / SÁBANA DE CALIFICACIONES (Grades Matrix)
+  // ============================================================================
+
+  async getPeriodGradesMatrix(
+    orgId: number,
+    params: {
+      courseId: number | string;
+      subjectId: number | string;
+      academicPeriodId: number | string;
+      studentId?: number | string;
+    }
+  ): Promise<PeriodGradesMatrixDTO> {
+    if (isDemo) {
+      return academicDemoService.getPeriodGradesMatrix(orgId, params);
+    }
+    const queryParams = new URLSearchParams();
+    queryParams.append('courseId', String(params.courseId));
+    queryParams.append('subjectId', String(params.subjectId));
+    queryParams.append('academicPeriodId', String(params.academicPeriodId));
+    if (params.studentId) queryParams.append('studentId', String(params.studentId));
+
+    const response = await apiClient.get<PeriodGradesMatrixDTO>(
+      `/api/organizations/${orgId}/academic/grades/matrix?${queryParams.toString()}`
+    );
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al consultar la matriz de calificaciones.');
+    }
+
+    return response.data;
+  },
 };
+
+function recklessSearchParams(filter: any): string {
+  if (!filter) return '';
+  const params = new URLSearchParams();
+  if (filter.courseId) params.append('courseId', String(filter.courseId));
+  if (filter.subjectId) params.append('subjectId', String(filter.subjectId));
+  if (filter.studentId) params.append('studentId', String(filter.studentId));
+  if (filter.from) params.append('from', filter.from);
+  if (filter.to) params.append('to', filter.to);
+  return params.toString();
+}

@@ -1,7 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import {
   Users,
-  Search,
   Filter,
   UserPlus,
   Edit2,
@@ -12,11 +11,13 @@ import {
   UserRoundPlus,
 } from 'lucide-react';
 import { DataTable, Column } from '../ui/DataTable';
-import { Activity, AttendanceRecord, Course, Enrollment, GradeItem, Student } from '../../types/teacher';
+import { Activity, AttendanceRecord, Course, Enrollment, GradeItem, Student, AcademicYear } from '../../types/teacher';
 import { EnrollmentModal } from './EnrollmentModal';
 import { StudentFormModal } from './StudentFormModal';
 import { StudentDetailModal } from './StudentDetailModal';
 import { StudentImportModal } from './StudentImportModal';
+import { StudentSearchInput } from '../ui/StudentSearchInput';
+import { matchesStudentQuery } from '../../utils/studentFilter';
 
 export interface StudentManagementViewProps {
   students: Student[];
@@ -24,7 +25,8 @@ export interface StudentManagementViewProps {
   onUpdateStudent: (id: string, updated: Partial<Student>) => Promise<void> | void;
   courses: Course[];
   enrollments: Enrollment[];
-  onAddEnrollment: (studentId: string, courseId: string) => Promise<void>;
+  academicYears?: AcademicYear[];
+  onAddEnrollment: (studentId: string, courseId: string, academicYearId?: string | null) => Promise<void>;
   attendanceHistory: AttendanceRecord[];
   grades: GradeItem[];
   activities: Activity[];
@@ -36,6 +38,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
   onUpdateStudent,
   courses,
   enrollments,
+  academicYears = [],
   onAddEnrollment,
   attendanceHistory,
   grades,
@@ -54,30 +57,30 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
   const [isEnrollmentModalOpen, setIsEnrollmentModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
-  const getStudentEnrollments = (studentId: string) =>
-    enrollments.filter(
+  const getStudentActiveEnrollment = (studentId: string): Enrollment | undefined => {
+    const studentEnrs = enrollments.filter(
       (enrollment) => enrollment.studentId === studentId && enrollment.status === 'active'
     );
+    if (studentEnrs.length === 0) return undefined;
+    // Priorizar matrícula del año lectivo más reciente o ID más reciente
+    return studentEnrs.sort((a, b) => Number(b.id) - Number(a.id))[0];
+  };
 
-  const getStudentCourseNames = (studentId: string) =>
-    getStudentEnrollments(studentId)
-      .map((enrollment) => courses.find((course) => course.id === enrollment.courseId)?.name)
-      .filter((name): name is string => Boolean(name));
+  const getStudentActiveCourseName = (studentId: string): string => {
+    const activeEnr = getStudentActiveEnrollment(studentId);
+    if (!activeEnr) return 'Sin matrícula';
+    const course = courses.find((c) => c.id === activeEnr.courseId);
+    return course ? course.name : 'Sin matrícula';
+  };
 
   // Filtered Students List
   const filteredStudents = useMemo(() => {
     return students.filter((student) => {
-      const matchesSearch =
-        `${student.firstName} ${student.lastName}`
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase()) ||
-        student.identification.includes(searchTerm) ||
-        student.email.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesSearch = matchesStudentQuery(student, searchTerm);
 
+      const activeEnr = getStudentActiveEnrollment(student.id);
       const matchesCourse =
-        selectedCourseFilter === 'all' || getStudentEnrollments(student.id).some(
-          (enrollment) => enrollment.courseId === selectedCourseFilter
-        );
+        selectedCourseFilter === 'all' || activeEnr?.courseId === selectedCourseFilter;
 
       const matchesStatus =
         selectedStatusFilter === 'all' || student.status === selectedStatusFilter;
@@ -108,7 +111,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
       header: 'Curso',
       cell: (item) => (
         <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs border border-slate-200">
-          {getStudentCourseNames(item.id).join(', ') || 'Sin matrícula'}
+          {getStudentActiveCourseName(item.id)}
         </span>
       ),
     },
@@ -191,7 +194,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
               setViewingStudent(item);
               setIsDetailModalOpen(true);
             }}
-            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-100 transition"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-100 transition cursor-pointer"
             title="Ver Expediente"
           >
             <Eye className="w-4 h-4" />
@@ -201,7 +204,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
               setEditingStudent(item);
               setIsFormModalOpen(true);
             }}
-            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-100 transition"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-slate-100 transition cursor-pointer"
             title="Editar Estudiante"
           >
             <Edit2 className="w-4 h-4" />
@@ -228,7 +231,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsImportModalOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs transition shadow-xs flex items-center gap-1.5"
+            className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs transition shadow-xs flex items-center gap-1.5 cursor-pointer"
             title="Importar lista de estudiantes desde Excel o CSV"
           >
             <UploadCloud className="w-4 h-4 text-emerald-600" />
@@ -236,7 +239,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
           </button>
           <button
             onClick={() => setIsEnrollmentModalOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs transition shadow-xs flex items-center gap-1.5"
+            className="px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs transition shadow-xs flex items-center gap-1.5 cursor-pointer"
           >
             <UserRoundPlus className="w-4 h-4 text-indigo-600" />
             <span>Matricular</span>
@@ -246,7 +249,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
               setEditingStudent(null);
               setIsFormModalOpen(true);
             }}
-            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition shadow-xs flex items-center gap-2"
+            className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition shadow-xs flex items-center gap-2 cursor-pointer"
           >
             <UserPlus className="w-4 h-4" />
             <span>Nuevo Estudiante</span>
@@ -257,17 +260,12 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
       {/* Filter and Search Bar */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
         {/* Search */}
-        <div className="relative w-full sm:w-72">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            aria-label="Buscar estudiantes por nombre, identificación o correo"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Buscar por nombre, cédula o correo..."
-            className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition"
-          />
-        </div>
+        <StudentSearchInput
+          value={searchTerm}
+          onChange={setSearchTerm}
+          placeholder="Buscar por nombre, cédula o correo..."
+          className="w-full sm:w-72"
+        />
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
@@ -279,7 +277,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
           <select
             value={selectedCourseFilter}
             onChange={(e) => setSelectedCourseFilter(e.target.value)}
-            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
           >
             <option value="all">Todos los Cursos</option>
             {courses.map((course) => (
@@ -290,7 +288,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
           <select
             value={selectedStatusFilter}
             onChange={(e) => setSelectedStatusFilter(e.target.value)}
-            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
           >
             <option value="all">Todos los Estados</option>
             <option value="active">Activos</option>
@@ -303,7 +301,11 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
       <DataTable
         columns={columns}
         data={filteredStudents}
-        emptyText="No se encontraron estudiantes registrados con los criterios seleccionados."
+        emptyText={
+          searchTerm.trim()
+            ? `No se encontraron estudiantes para "${searchTerm}".`
+            : "No se encontraron estudiantes registrados con los criterios seleccionados."
+        }
         onRowClick={(item) => {
           setViewingStudent(item);
           setIsDetailModalOpen(true);
@@ -345,6 +347,7 @@ export const StudentManagementView: React.FC<StudentManagementViewProps> = ({
         students={students}
         courses={courses}
         enrollments={enrollments}
+        academicYears={academicYears}
         onSave={onAddEnrollment}
       />
 

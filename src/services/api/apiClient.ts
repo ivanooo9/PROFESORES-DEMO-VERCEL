@@ -115,4 +115,11 @@ export const apiClient = {
       headers,
     });
   },
+
+  delete<T = any>(endpoint: string, headers?: HeadersInit): Promise<ApiResponse<T>> {
+    return request<T>(endpoint, {
+      method: 'DELETE',
+      headers,
+    });
+  },
 };

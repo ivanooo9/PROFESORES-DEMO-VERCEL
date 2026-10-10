@@ -11,9 +11,15 @@ interface CourseFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (course: CourseFormData) => Promise<void>;
+  initialCourse?: { id: string; name: string; level: string; classroom?: string } | null;
 }
 
-export const CourseFormModal: React.FC<CourseFormModalProps> = ({ isOpen, onClose, onSave }) => {
+export const CourseFormModal: React.FC<CourseFormModalProps> = ({
+  isOpen,
+  onClose,
+  onSave,
+  initialCourse,
+}) => {
   const [name, setName] = useState('');
   const [level, setLevel] = useState('');
   const [classroom, setClassroom] = useState('');
@@ -22,15 +28,23 @@ export const CourseFormModal: React.FC<CourseFormModalProps> = ({ isOpen, onClos
 
   useEffect(() => {
     if (isOpen) {
-      setName('');
-      setLevel('');
-      setClassroom('');
+      if (initialCourse) {
+        setName(initialCourse.name || '');
+        setLevel(initialCourse.level || '');
+        setClassroom(initialCourse.classroom || '');
+      } else {
+        setName('');
+        setLevel('');
+        setClassroom('');
+      }
       setErrorMessage(null);
       setIsSubmitting(false);
     }
-  }, [isOpen]);
+  }, [isOpen, initialCourse]);
 
   if (!isOpen) return null;
+
+  const isEditing = Boolean(initialCourse);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -68,8 +82,12 @@ export const CourseFormModal: React.FC<CourseFormModalProps> = ({ isOpen, onClos
               <BookOpen className="w-5 h-5" />
             </div>
             <div>
-              <h2 id="course-form-title" className="text-base font-bold text-slate-900">Registrar curso</h2>
-              <p className="text-xs text-slate-500">Ingresa los datos del curso o paralelo.</p>
+              <h2 id="course-form-title" className="text-base font-bold text-slate-900">
+                {isEditing ? 'Editar curso' : 'Registrar curso'}
+              </h2>
+              <p className="text-xs text-slate-500">
+                {isEditing ? 'Actualiza los datos del curso o paralelo.' : 'Ingresa los datos del nuevo curso o paralelo.'}
+              </p>
             </div>
           </div>
           <button
@@ -77,7 +95,7 @@ export const CourseFormModal: React.FC<CourseFormModalProps> = ({ isOpen, onClos
             onClick={onClose}
             disabled={isSubmitting}
             aria-label="Cerrar formulario"
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition disabled:opacity-50"
+            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition disabled:opacity-50 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -101,7 +119,7 @@ export const CourseFormModal: React.FC<CourseFormModalProps> = ({ isOpen, onClos
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="Ej. 1ro A"
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
             />
           </div>
 
@@ -115,7 +133,7 @@ export const CourseFormModal: React.FC<CourseFormModalProps> = ({ isOpen, onClos
               value={level}
               onChange={(event) => setLevel(event.target.value)}
               placeholder="Ej. Educación General Básica"
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
             />
           </div>
 
@@ -128,7 +146,7 @@ export const CourseFormModal: React.FC<CourseFormModalProps> = ({ isOpen, onClos
               value={classroom}
               onChange={(event) => setClassroom(event.target.value)}
               placeholder="Ej. Aula 204"
-              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500"
             />
           </div>
 
@@ -137,14 +155,14 @@ export const CourseFormModal: React.FC<CourseFormModalProps> = ({ isOpen, onClos
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 font-bold transition disabled:opacity-50"
+              className="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 font-bold transition disabled:opacity-50 cursor-pointer"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={isSubmitting || !name.trim() || !level.trim()}
-              className="px-5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold transition flex items-center gap-2 disabled:opacity-50"
+              className="px-5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold transition flex items-center gap-2 disabled:opacity-50 cursor-pointer shadow-xs"
             >
               <Save className="w-4 h-4" />
               <span>{isSubmitting ? 'Guardando...' : 'Guardar curso'}</span>

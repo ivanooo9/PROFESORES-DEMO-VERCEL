@@ -35,7 +35,7 @@ export interface OrganizationModuleRecord {
   module: ProfessionalModuleInfo;
 }
 
-const isDemo = import.meta.env.VITE_DEMO_MODE === 'true';
+const isDemo = import.meta.env.VITE_DEMO_MODE !== 'false';
 
 export const organizationApi = {
   async getCurrentUser(): Promise<UserSession | null> {

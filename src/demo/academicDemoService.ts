@@ -13,6 +13,16 @@ import {
   AttendanceReportDTO,
   GradeReportDTO,
   StudentReportDTO,
+  AcademicYear,
+  AcademicYearStatus,
+  AcademicPeriod,
+  AcademicPeriodType,
+  AcademicPeriodStatus,
+  AcademicEvaluationScheme,
+  AcademicEvaluationCategory,
+  PeriodClosureReadinessDTO,
+  PeriodGradesMatrixDTO,
+  CourseDependenciesDTO,
 } from '../types/teacher';
 import { demoStorage } from './demoStorage';
 
@@ -55,6 +65,21 @@ export const academicDemoService = {
     demoStorage.archiveCourse(courseId);
   },
 
+  async reactivateCourse(_orgId: number, courseId: number | string): Promise<Course> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.reactivateCourse(courseId);
+  },
+
+  async getCourseDependencies(_orgId: number, courseId: number | string): Promise<CourseDependenciesDTO> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getCourseDependencies(courseId);
+  },
+
+  async deleteCourse(_orgId: number, courseId: number | string): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    demoStorage.deleteCourse(courseId);
+  },
+
   // SUBJECTS
   async getSubjectsByCourse(
     _orgId: number,
@@ -67,7 +92,19 @@ export const academicDemoService = {
   async createSubject(
     _orgId: number,
     courseId: number | string,
-    data: { name: string; code?: string; hoursPerWeek?: number | null; teacherUserId?: number | null }
+    data: {
+      name: string;
+      code?: string;
+      hoursPerWeek?: number | null;
+      teacherUserId?: number | null;
+      scheduleSlots?: Array<{
+        dayOfWeek: number;
+        startTime: string;
+        endTime: string;
+        pedagogicalHours?: number;
+        room?: string;
+      }>;
+    }
   ): Promise<Subject> {
     await new Promise((resolve) => setTimeout(resolve, 50));
     return demoStorage.createSubject(courseId, data);
@@ -76,14 +113,63 @@ export const academicDemoService = {
   async updateSubject(
     _orgId: number,
     subjectId: number | string,
-    data: { name?: string; code?: string; hoursPerWeek?: number | null; teacherUserId?: number | null }
+    data: {
+      name?: string;
+      code?: string;
+      hoursPerWeek?: number | null;
+      teacherUserId?: number | null;
+      scheduleSlots?: Array<{
+        dayOfWeek: number;
+        startTime: string;
+        endTime: string;
+        pedagogicalHours?: number;
+        room?: string;
+      }>;
+    }
   ): Promise<Subject> {
     await new Promise((resolve) => setTimeout(resolve, 50));
     return demoStorage.updateSubject(subjectId, data);
   },
 
-  async inactivateSubject(_orgId: number, _subjectId: number | string): Promise<void> {
+  async inactivateSubject(_orgId: number, subjectId: number | string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 50));
+    demoStorage.inactivateSubject(subjectId);
+  },
+
+  // SCHEDULES
+  async getSubjectSchedule(
+    _orgId: number,
+    subjectId: number | string,
+    _options?: { effectiveDate?: string; includeHistory?: boolean }
+  ): Promise<any> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getSubjectSchedule(subjectId);
+  },
+
+  async saveSubjectSchedule(
+    _orgId: number,
+    subjectId: number | string,
+    data: {
+      slots: Array<{
+        dayOfWeek: number;
+        startTime: string;
+        endTime: string;
+        pedagogicalHours?: number;
+        room?: string | null;
+      }>;
+    }
+  ): Promise<any> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.saveSubjectSchedule(subjectId, data);
+  },
+
+  async getCourseSchedule(
+    _orgId: number,
+    courseId: number | string,
+    _options?: { academicYearId?: number | string; effectiveDate?: string }
+  ): Promise<any> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getCourseSchedule(courseId);
   },
 
   // STUDENTS
@@ -149,10 +235,11 @@ export const academicDemoService = {
     _orgId: number,
     studentId: number | string,
     courseId: number | string,
-    _period?: string | null
+    period?: string | null,
+    academicYearId?: number | string | null
   ): Promise<Enrollment> {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    return demoStorage.enrollStudent(studentId, courseId);
+    return demoStorage.enrollStudent(studentId, courseId, period, academicYearId);
   },
 
   async updateEnrollmentStatus(
@@ -178,9 +265,9 @@ export const academicDemoService = {
     sessionId: number | string
   ): Promise<ClassSession & { attendanceRecords: AttendanceRecord[] }> {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const s = demoStorage.getSessionById(sessionId);
-    if (!s) throw new Error('Sesión de clase no encontrada.');
-    return s;
+    const session = demoStorage.getSessionById(sessionId);
+    if (!session) throw new Error('Sesión no encontrada.');
+    return session;
   },
 
   async createSession(
@@ -233,13 +320,23 @@ export const academicDemoService = {
     return demoStorage.saveAttendanceBatch(sessionId, records);
   },
 
+  async rectifyAttendanceBatch(
+    _orgId: number,
+    sessionId: number | string,
+    records: { studentId: number | string; status: AttendanceStatus; observation?: string | null }[],
+    _reason: string
+  ): Promise<any> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.saveAttendanceBatch(sessionId, records);
+  },
+
   async getAttendanceBySession(
     _orgId: number,
     sessionId: number | string
   ): Promise<AttendanceRecord[]> {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const session = demoStorage.getSessionById(sessionId);
-    return session?.attendanceRecords || [];
+    const history = demoStorage.getAttendanceHistory();
+    return history.filter((a) => String(a.sessionId) === String(sessionId));
   },
 
   async getAttendanceHistory(
@@ -300,6 +397,9 @@ export const academicDemoService = {
       dueDate?: string | null;
       maxScore: number;
       teacherUserId?: number | string | null;
+      academicPeriodId?: number | string | null;
+      evaluationSchemeId?: number | string | null;
+      categoryId?: number | string | null;
     }
   ): Promise<Activity> {
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -316,6 +416,9 @@ export const academicDemoService = {
       dueDate?: string | null;
       maxScore?: number;
       teacherUserId?: number | string | null;
+      academicPeriodId?: number | string | null;
+      evaluationSchemeId?: number | string | null;
+      categoryId?: number | string | null;
     }
   ): Promise<Activity> {
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -326,7 +429,14 @@ export const academicDemoService = {
   async saveGradesBatch(
     _orgId: number,
     activityId: number | string,
-    grades: { studentId: number | string; score: number; comments?: string | null }[]
+    grades: {
+      studentId?: number | string;
+      enrollmentId?: number | string;
+      score?: number | null;
+      status?: string;
+      comments?: string | null;
+    }[],
+    _reason?: string | null
   ): Promise<GradeItem[]> {
     await new Promise((resolve) => setTimeout(resolve, 50));
     return demoStorage.saveGradesBatch(activityId, grades);
@@ -358,7 +468,7 @@ export const academicDemoService = {
     studentId: number | string
   ): Promise<GradeItem[]> {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    return demoStorage.getGradesHistory({ studentId });
+    return demoStorage.getStudentGrades(studentId);
   },
 
   async updateGradeRecord(
@@ -413,5 +523,205 @@ export const academicDemoService = {
   ): Promise<StudentReportDTO> {
     await new Promise((resolve) => setTimeout(resolve, 50));
     return demoStorage.getStudentReport(studentId);
+  },
+
+  // ACADEMIC YEARS
+  async getAcademicYears(
+    _orgId: number,
+    filter?: { status?: string; search?: string }
+  ): Promise<AcademicYear[]> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getAcademicYears(filter);
+  },
+
+  async getAcademicYearById(_orgId: number, yearId: number | string): Promise<AcademicYear> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getAcademicYearById(yearId);
+  },
+
+  async createAcademicYear(
+    _orgId: number,
+    data: { name: string; startDate: string; endDate: string; status?: AcademicYearStatus }
+  ): Promise<AcademicYear> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.createAcademicYear(data);
+  },
+
+  async updateAcademicYear(
+    _orgId: number,
+    yearId: number | string,
+    data: { name?: string; startDate?: string; endDate?: string; status?: AcademicYearStatus }
+  ): Promise<AcademicYear> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.updateAcademicYear(yearId, data);
+  },
+
+  async changeAcademicYearStatus(
+    _orgId: number,
+    yearId: number | string,
+    status: AcademicYearStatus
+  ): Promise<AcademicYear> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.changeAcademicYearStatus(yearId, status);
+  },
+
+  // ACADEMIC PERIODS
+  async getAcademicPeriods(
+    _orgId: number,
+    filter?: { academicYearId?: number | string; status?: string; parentId?: number | string }
+  ): Promise<AcademicPeriod[]> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getAcademicPeriods(filter);
+  },
+
+  async getAcademicPeriodById(_orgId: number, periodId: number | string): Promise<AcademicPeriod> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getAcademicPeriodById(periodId);
+  },
+
+  async createAcademicPeriod(
+    _orgId: number,
+    data: {
+      academicYearId: number | string;
+      parentId?: number | string | null;
+      name: string;
+      type: AcademicPeriodType;
+      order?: number;
+      startDate: string;
+      endDate: string;
+      status?: AcademicPeriodStatus;
+    }
+  ): Promise<AcademicPeriod> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.createAcademicPeriod(data);
+  },
+
+  async updateAcademicPeriod(
+    _orgId: number,
+    periodId: number | string,
+    data: {
+      name?: string;
+      type?: AcademicPeriodType;
+      order?: number;
+      startDate?: string;
+      endDate?: string;
+      parentId?: number | string | null;
+      status?: AcademicPeriodStatus;
+    }
+  ): Promise<AcademicPeriod> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.updateAcademicPeriod(periodId, data);
+  },
+
+  async changeAcademicPeriodStatus(
+    _orgId: number,
+    periodId: number | string,
+    status: AcademicPeriodStatus
+  ): Promise<AcademicPeriod> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.changeAcademicPeriodStatus(periodId, status);
+  },
+
+  async getPeriodClosureReadiness(
+    _orgId: number,
+    periodId: number | string
+  ): Promise<PeriodClosureReadinessDTO> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getPeriodClosureReadiness(periodId);
+  },
+
+  // EVALUATION SCHEMES
+  async getEvaluationSchemes(
+    _orgId: number,
+    filter?: { courseId?: number | string; subjectId?: number | string; academicPeriodId?: number | string }
+  ): Promise<AcademicEvaluationScheme[]> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getEvaluationSchemes(filter);
+  },
+
+  async getEvaluationSchemeById(_orgId: number, schemeId: number | string): Promise<AcademicEvaluationScheme> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getEvaluationSchemeById(schemeId);
+  },
+
+  async createEvaluationScheme(
+    _orgId: number,
+    data: {
+      courseId: number | string;
+      subjectId: number | string;
+      academicPeriodId: number | string;
+      maxScale?: number;
+      minPassingScore?: number;
+    }
+  ): Promise<AcademicEvaluationScheme> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.createEvaluationScheme(data);
+  },
+
+  async updateEvaluationScheme(
+    _orgId: number,
+    schemeId: number | string,
+    data: { maxScale?: number; minPassingScore?: number }
+  ): Promise<AcademicEvaluationScheme> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.updateEvaluationScheme(schemeId, data);
+  },
+
+  async validateEvaluationScheme(_orgId: number, schemeId: number | string): Promise<AcademicEvaluationScheme> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.validateEvaluationScheme(schemeId);
+  },
+
+  async lockEvaluationScheme(_orgId: number, schemeId: number | string): Promise<AcademicEvaluationScheme> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.lockEvaluationScheme(schemeId);
+  },
+
+  async closeEvaluationScheme(_orgId: number, schemeId: number | string): Promise<AcademicEvaluationScheme> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.closeEvaluationScheme(schemeId);
+  },
+
+  // EVALUATION CATEGORIES
+  async createEvaluationCategory(
+    _orgId: number,
+    schemeId: number | string,
+    data: { name: string; weightPercentage: number; order?: number }
+  ): Promise<AcademicEvaluationCategory> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.createEvaluationCategory(schemeId, data);
+  },
+
+  async updateEvaluationCategory(
+    _orgId: number,
+    categoryId: number | string,
+    data: { name?: string; weightPercentage?: number; order?: number }
+  ): Promise<AcademicEvaluationCategory> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.updateEvaluationCategory(categoryId, data);
+  },
+
+  async deleteEvaluationCategory(_orgId: number, categoryId: number | string): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    demoStorage.deleteEvaluationCategory(categoryId);
+  },
+
+  // GRADES MATRIX
+  async getPeriodGradesMatrix(
+    _orgId: number,
+    params: {
+      courseId: number | string;
+      subjectId: number | string;
+      academicPeriodId: number | string;
+      studentId?: number | string;
+    }
+  ): Promise<PeriodGradesMatrixDTO> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.getPeriodGradesMatrix(
+      params.courseId,
+      params.subjectId,
+      params.academicPeriodId,
+      params.studentId
+    );
   },
 };

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Settings, User, Building2, Bell, BookOpen, ShieldCheck, RotateCcw, Check, Sparkles } from 'lucide-react';
 import { UserSession, Organization } from '../../services/api/organizationApi';
 import { demoStorage } from '../../demo/demoStorage';
+import { AcademicConfigSection } from './AcademicConfigSection';
 
 export interface SettingsViewProps {
   currentUser?: UserSession | null;
@@ -13,6 +14,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   activeOrganization,
 }) => {
   const [resetSuccess, setResetSuccess] = useState(false);
+
+  const isAdminOrOwner =
+    currentUser?.role?.toUpperCase() === 'ADMIN' ||
+    currentUser?.role?.toUpperCase() === 'OWNER' ||
+    true; // En DEMO permitimos administrar años/periodos
 
   const handleResetDemo = () => {
     const confirmed = window.confirm(
@@ -41,7 +47,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       </div>
 
       {/* Main Settings Panel */}
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-6 max-w-3xl">
+      <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xs space-y-6 max-w-4xl">
         {/* Section 1: Teacher Profile */}
         <div className="space-y-4">
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2 pb-2 border-b border-slate-100">
@@ -127,7 +133,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
 
-        {/* Section 4: Demo Mode Control */}
+        {/* Section 4: Academic Multi-level Configuration */}
+        <AcademicConfigSection
+          organization={activeOrganization}
+          isAdminOrOwner={isAdminOrOwner}
+        />
+
+        {/* Section 5: Demo Mode Control */}
         <div className="space-y-4 pt-4 border-t border-slate-100">
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2 pb-2 border-b border-slate-100">
             <Sparkles className="w-4 h-4 text-amber-500" />
@@ -146,7 +158,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               type="button"
               onClick={handleResetDemo}
               disabled={resetSuccess}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 cursor-pointer ${
                 resetSuccess
                   ? 'bg-emerald-600 text-white'
                   : 'bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 shadow-2xs'

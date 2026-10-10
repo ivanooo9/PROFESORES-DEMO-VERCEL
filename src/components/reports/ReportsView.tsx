@@ -867,10 +867,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                           <td className="py-2 px-3 text-slate-600">{g.subjectName}</td>
                           <td className="py-2 px-3 text-slate-500 font-mono text-[11px]">{g.gradedAt || '—'}</td>
                           <td className="py-2 px-3 text-center font-mono font-bold">
-                            <span className={g.score >= 7.0 ? 'text-emerald-700' : 'text-rose-600'}>
-                              {g.score.toFixed(1)}
-                            </span>
-                            <span className="text-slate-400 font-normal"> / {g.maxScore}</span>
+                            {g.score !== null ? (
+                              <>
+                                <span className={g.score >= 7.0 ? 'text-emerald-700' : 'text-rose-600'}>
+                                  {g.score.toFixed(1)}
+                                </span>
+                                <span className="text-slate-400 font-normal"> / {g.maxScore}</span>
+                              </>
+                            ) : (
+                              <span className="text-slate-400 font-normal">Sin calificar</span>
+                            )}
                           </td>
                           <td className="py-2 px-3 text-slate-500 text-[11px]">{g.comments || '—'}</td>
                         </tr>

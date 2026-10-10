@@ -28,6 +28,7 @@ import {
   Student,
   Subject,
   AcademicDashboardDTO,
+  AcademicYear,
 } from './types/teacher';
 
 import { academicApi } from './services/api/academicApi';
@@ -49,11 +50,12 @@ export function App() {
   const organizationRequestRef = useRef(0);
   const academicRequestRef = useRef(0);
 
-  // Estados de Datos Académicos F1-F3 (Autoridad: Backend PostgreSQL)
+  // Estados de Datos Académicos F1-F4 (Autoridad: Backend LocalStorage Demo)
   const [courses, setCourses] = useState<Course[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
+  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
   const [classSessions, setClassSessions] = useState<ClassSession[]>([]);
   const [attendanceHistory, setAttendanceHistory] = useState<AttendanceRecord[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -68,15 +70,16 @@ export function App() {
   const [isNewStudentModalOpen, setIsNewStudentModalOpen] = useState(false);
 
   // Carga de datos académicos F1, F2, F3 y F4 desde el API
-  const loadAcademicData = useCallback(async (orgId: number) => {
+  const loadAcademicData = useCallback(async (orgId: number, silent = false) => {
     const requestId = ++academicRequestRef.current;
-    setIsDataLoading(true);
+    if (!silent) setIsDataLoading(true);
     setApiError(null);
     try {
       const [
         fetchedCourses,
         fetchedStudents,
         fetchedEnrollments,
+        fetchedYears,
         fetchedSessions,
         fetchedAttendanceHistory,
         fetchedActivities,
@@ -86,6 +89,7 @@ export function App() {
         academicApi.getCourses(orgId),
         academicApi.getStudents(orgId),
         academicApi.getEnrollments(orgId),
+        academicApi.getAcademicYears(orgId).catch(() => []),
         academicApi.getSessions(orgId),
         academicApi.getAttendanceHistory(orgId),
         academicApi.getActivities(orgId),
@@ -106,6 +110,7 @@ export function App() {
       setCourses(fetchedCourses);
       setStudents(fetchedStudents);
       setEnrollments(fetchedEnrollments);
+      setAcademicYears(fetchedYears);
       setSubjects(flattenedSubjects);
       setClassSessions(fetchedSessions);
       setAttendanceHistory(fetchedAttendanceHistory);
@@ -116,21 +121,22 @@ export function App() {
       if (requestId !== academicRequestRef.current) return;
       console.error('[Academic Load Error]:', err);
       setApiError(err.message || 'Error al conectar con la base de datos académica.');
-      setCourses([]);
-      setStudents([]);
-      setEnrollments([]);
-      setSubjects([]);
-      setClassSessions([]);
-      setAttendanceHistory([]);
-      setActivities([]);
-      setGrades([]);
-      setDashboardData(null);
+      if (!silent) {
+        setCourses([]);
+        setStudents([]);
+        setEnrollments([]);
+        setAcademicYears([]);
+        setSubjects([]);
+        setClassSessions([]);
+        setAttendanceHistory([]);
+        setActivities([]);
+        setGrades([]);
+        setDashboardData(null);
+      }
     } finally {
-      if (requestId === academicRequestRef.current) setIsDataLoading(false);
+      if (requestId === academicRequestRef.current && !silent) setIsDataLoading(false);
     }
   }, []);
-
-
 
   // Inicialización de autenticación y organización
   const initAuth = useCallback(async () => {
@@ -210,6 +216,7 @@ export function App() {
         setCourses([]);
         setStudents([]);
         setEnrollments([]);
+        setAcademicYears([]);
         setSubjects([]);
         setClassSessions([]);
         setAttendanceHistory([]);
@@ -246,6 +253,7 @@ export function App() {
     setCourses([]);
     setStudents([]);
     setEnrollments([]);
+    setAcademicYears([]);
     setSubjects([]);
     setClassSessions([]);
     setAttendanceHistory([]);
@@ -311,6 +319,59 @@ export function App() {
     );
   };
 
+  const handleUpdateCourse = async (
+    courseId: string,
+    updated: { name: string; level: string; classroom?: string }
+  ) => {
+    if (!activeOrganization) throw new Error('Selecciona una institución.');
+    const saved = await academicApi.updateCourse(activeOrganization.id, courseId, updated);
+    setCourses((prev) => prev.map((c) => (c.id === courseId ? saved : c)));
+  };
+
+  const handleArchiveCourse = async (courseId: string) => {
+    if (!activeOrganization) throw new Error('Selecciona una institución.');
+    await academicApi.archiveCourse(activeOrganization.id, courseId);
+    setCourses((prev) =>
+      prev.map((c) => (c.id === courseId ? { ...c, status: 'archived' as const } : c))
+    );
+    setDashboardData((prev) =>
+      prev
+        ? {
+            ...prev,
+            activeCoursesCount: Math.max(0, prev.activeCoursesCount - 1),
+          }
+        : prev
+    );
+  };
+
+  const handleReactivateCourse = async (courseId: string) => {
+    if (!activeOrganization) throw new Error('Selecciona una institución.');
+    const reactivated = await academicApi.reactivateCourse(activeOrganization.id, courseId);
+    setCourses((prev) => prev.map((c) => (c.id === courseId ? reactivated : c)));
+    setDashboardData((prev) =>
+      prev
+        ? {
+            ...prev,
+            activeCoursesCount: prev.activeCoursesCount + 1,
+          }
+        : prev
+    );
+  };
+
+  const handleDeleteCourse = async (courseId: string) => {
+    if (!activeOrganization) throw new Error('Selecciona una institución.');
+    await academicApi.deleteCourse(activeOrganization.id, courseId);
+    setCourses((prev) => prev.filter((c) => c.id !== courseId));
+    setDashboardData((prev) =>
+      prev
+        ? {
+            ...prev,
+            totalCoursesCount: Math.max(0, prev.totalCoursesCount - 1),
+          }
+        : prev
+    );
+  };
+
   const handleAddSubject = async (courseId: string, newSubject: SubjectFormData) => {
     if (!activeOrganization) {
       throw new Error('Selecciona una institución antes de registrar una materia.');
@@ -367,7 +428,11 @@ export function App() {
     }
   };
 
-  const handleAddEnrollment = async (studentId: string, courseId: string) => {
+  const handleAddEnrollment = async (
+    studentId: string,
+    courseId: string,
+    academicYearId?: string | null
+  ) => {
     if (!activeOrganization) {
       throw new Error('Selecciona una institución antes de matricular.');
     }
@@ -375,14 +440,21 @@ export function App() {
       const newEnrollment = await academicApi.enrollStudent(
         activeOrganization.id,
         studentId,
-        courseId
+        courseId,
+        undefined,
+        academicYearId
       );
-      setEnrollments((prev) => [newEnrollment, ...prev]);
 
-      const [coursesResult, studentsResult] = await Promise.allSettled([
+      const [enrollmentsResult, coursesResult, studentsResult] = await Promise.allSettled([
+        academicApi.getEnrollments(activeOrganization.id),
         academicApi.getCourses(activeOrganization.id),
         academicApi.getStudents(activeOrganization.id),
       ]);
+      if (enrollmentsResult.status === 'fulfilled') {
+        setEnrollments(enrollmentsResult.value);
+      } else {
+        setEnrollments((prev) => [newEnrollment, ...prev.filter((e) => e.id !== newEnrollment.id)]);
+      }
       if (coursesResult.status === 'fulfilled') setCourses(coursesResult.value);
       if (studentsResult.status === 'fulfilled') setStudents(studentsResult.value);
       if (coursesResult.status === 'rejected' || studentsResult.status === 'rejected') {
@@ -393,7 +465,7 @@ export function App() {
     }
   };
 
-  // Handlers F2 (Asistencia y Sesiones conectadas a PostgreSQL)
+  // Handlers F2 (Asistencia y Sesiones conectadas a API)
   const handleSaveAttendance = async (
     records: {
       studentId: string;
@@ -419,7 +491,7 @@ export function App() {
         if (existingSessions.length > 0) {
           targetSessionId = existingSessions[0].id;
         } else {
-          // Crear sesión de clase real en PostgreSQL
+          // Crear sesión de clase real
           const createdSession = await academicApi.createSession(
             activeOrganization.id,
             context.courseId,
@@ -459,7 +531,7 @@ export function App() {
     setIsQuickAttendanceOpen(true);
   };
 
-  // Handlers F3 (Actividades y Calificaciones conectadas a PostgreSQL)
+  // Handlers F3 (Actividades y Calificaciones conectadas a API)
   const handleAddGrade = async (newGrade: Omit<GradeItem, 'id'>) => {
     if (!activeOrganization) {
       throw new Error('Selecciona una institución antes de registrar una calificación.');
@@ -551,17 +623,19 @@ export function App() {
           type: newActivity.type,
           dueDate: newActivity.date,
           maxScore: newActivity.maxScore,
+          academicPeriodId: newActivity.academicPeriodId,
+          categoryId: newActivity.categoryId,
+          evaluationSchemeId: newActivity.evaluationSchemeId,
         }
       );
       setActivities((prev) => [created, ...prev]);
       return true;
     } catch (err: any) {
       console.error('[Add Activity Error]:', err);
-      alert(`Error al registrar evaluación: ${err.message}`);
+      alert(`Error al registrar actividad: ${err.message}`);
       return false;
     }
   };
-
 
   return (
     <div className="min-h-screen bg-[#FAFAFA] text-[#373A40] font-sans flex flex-col lg:flex-row antialiased selection:bg-indigo-500 selection:text-white">
@@ -601,7 +675,7 @@ export function App() {
             {activeOrganization && (
               <button
                 onClick={() => handleSelectOrganization(activeOrganization.id)}
-                className="px-2.5 py-1 bg-white border border-rose-300 rounded-lg hover:bg-rose-100 font-bold transition flex items-center gap-1"
+                className="px-2.5 py-1 bg-white border border-rose-300 rounded-lg hover:bg-rose-100 font-bold transition flex items-center gap-1 cursor-pointer"
               >
                 <RefreshCw className="w-3 h-3" /> Reintentar
               </button>
@@ -616,7 +690,7 @@ export function App() {
               <p className="font-bold">No se detecta una sesión activa</p>
               <p className="text-amber-800">Inicia sesión en la plataforma y vuelve a cargar este módulo.</p>
             </div>
-            <button onClick={() => window.location.reload()} className="px-3 py-2 rounded-lg bg-white border border-amber-300 font-bold hover:bg-amber-100">
+            <button onClick={() => window.location.reload()} className="px-3 py-2 rounded-lg bg-white border border-amber-300 font-bold hover:bg-amber-100 cursor-pointer">
               Recargar
             </button>
           </div>
@@ -665,7 +739,7 @@ export function App() {
             <button
               onClick={handleEnableTeachingModule}
               disabled={isActivatingModule}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition shrink-0 flex items-center gap-2"
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition shrink-0 flex items-center gap-2 cursor-pointer"
             >
               {isActivatingModule ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4" />}
               Habilitar Módulo en esta Institución
@@ -675,14 +749,14 @@ export function App() {
 
         {/* Main Content Area */}
         <main className="flex-1 w-full max-w-[1600px] mx-auto p-4 sm:p-6 lg:p-8">
-          {isDataLoading && (
+          {isDataLoading && courses.length === 0 && (
             <div className="flex items-center justify-center p-8 gap-2 text-indigo-600 text-xs font-semibold">
               <Loader2 className="w-5 h-5 animate-spin" />
-              <span>Cargando registros académicos...</span>
+              <span>Sincronizando registros académicos con base local...</span>
             </div>
           )}
 
-          {!isAuthLoading && currentUser && activeOrganization && isTeachingEnabled && !isDataLoading && (
+          {!isAuthLoading && currentUser && activeOrganization && isTeachingEnabled && (
           <>
           {/* Tab 1: Dashboard */}
           {activeTab === 'dashboard' && (
@@ -708,6 +782,7 @@ export function App() {
               onUpdateStudent={handleUpdateStudent}
               courses={courses}
               enrollments={enrollments}
+              academicYears={academicYears}
               onAddEnrollment={handleAddEnrollment}
               attendanceHistory={attendanceHistory}
               grades={grades}
@@ -724,8 +799,15 @@ export function App() {
               enrollments={enrollments}
               attendanceHistory={attendanceHistory}
               grades={grades}
+              academicYears={academicYears}
+              orgId={activeOrganization.id}
               onAddCourse={handleAddCourse}
+              onUpdateCourse={handleUpdateCourse}
+              onArchiveCourse={handleArchiveCourse}
+              onReactivateCourse={handleReactivateCourse}
+              onDeleteCourse={handleDeleteCourse}
               onAddSubject={handleAddSubject}
+              onScheduleUpdated={() => loadAcademicData(activeOrganization.id, true)}
             />
           )}
 
@@ -742,6 +824,7 @@ export function App() {
           {/* Tab 5: Calificaciones */}
           {activeTab === 'grades' && (
             <GradesView
+              organization={activeOrganization}
               students={students}
               grades={grades}
               onAddGrade={handleAddGrade}
@@ -751,6 +834,10 @@ export function App() {
               onAddActivity={handleAddActivity}
               enrollments={enrollments}
               onSaveGrades={handleSaveGrades}
+              academicYears={academicYears}
+              onReloadAcademicData={async () => {
+                if (activeOrganization) await loadAcademicData(activeOrganization.id, true);
+              }}
             />
           )}
 
@@ -758,6 +845,8 @@ export function App() {
           {activeTab === 'classes' && (
             <ClassScheduleView
               classes={classSessions}
+              courses={courses}
+              subjects={subjects}
               onOpenQuickAttendance={(session) =>
                 openQuickAttendance({
                   courseId: session.courseId,
