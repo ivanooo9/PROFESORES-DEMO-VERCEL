@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Lock,
   Loader2,
+  X,
 } from 'lucide-react';
 import {
   PeriodGradesMatrixDTO,
@@ -26,6 +27,8 @@ export interface GradeMatrixTableProps {
     }[]
   ) => Promise<void>;
   isReadOnly?: boolean;
+  onReassignCategory?: (activityId: number, categoryId: number) => Promise<void>;
+  canManageScheme?: boolean;
 }
 
 interface CellEditState {
@@ -170,12 +173,23 @@ export const GradeMatrixTable: React.FC<GradeMatrixTableProps> = ({
   isSaving,
   onSaveGrades,
   isReadOnly = false,
+  onReassignCategory,
+  canManageScheme = false,
 }) => {
   // Estado local para edición rápida por celda: key = `${studentId}_${activityId}`
   const [editedCells, setEditedCells] = useState<Record<string, CellEditState>>({});
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(new Set());
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Estado para modal de reasignación de categoría para actividades sin categoría
+  const [reassignTargetActivity, setReassignTargetActivity] = useState<{
+    activityId: number;
+    activityName: string;
+    maxScore: number;
+  } | null>(null);
+  const [selectedNewCategoryId, setSelectedNewCategoryId] = useState<string>('');
+  const [isReassigning, setIsReassigning] = useState<boolean>(false);
 
   // Inicializar estado local cuando cambia la matriz
   useEffect(() => {
@@ -226,8 +240,11 @@ export const GradeMatrixTable: React.FC<GradeMatrixTableProps> = ({
   const minPassing = scheme?.minPassingScore || 7;
   const isGradeReadOnly = period.status === 'CLOSED' || period.status === 'ARCHIVED' || isReadOnly;
 
-  // Extraer lista única de categorías del primer alumno o del esquema
-  const categoriesList = students[0]?.categories || [];
+  // Extraer lista única de categorías del esquema/backend o del primer alumno
+  const categoriesList =
+    matrixData.categories && matrixData.categories.length > 0
+      ? matrixData.categories
+      : students[0]?.categories || [];
 
   // Manejar cambio de valor en celda
   const handleScoreChange = (
@@ -515,6 +532,24 @@ export const GradeMatrixTable: React.FC<GradeMatrixTableProps> = ({
                             <div className="text-[9px] text-slate-400 font-mono font-normal mt-0.5">
                               Max: {act.maxScore} pts
                             </div>
+                            {cat.categoryId === 0 && onReassignCategory && !isGradeReadOnly && canManageScheme && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReassignTargetActivity({
+                                    activityId: act.activityId,
+                                    activityName: act.activityName,
+                                    maxScore: act.maxScore,
+                                  });
+                                  const firstValid = categoriesList.find((c) => c.categoryId > 0);
+                                  setSelectedNewCategoryId(firstValid ? String(firstValid.categoryId) : '');
+                                }}
+                                className="mt-1 text-[9px] text-indigo-600 hover:text-indigo-800 underline font-semibold cursor-pointer block mx-auto"
+                                title="Asignar esta actividad a una categoría ponderada"
+                              >
+                                Asignar categoría
+                              </button>
+                            )}
                           </th>
                         );
                       })}
@@ -544,9 +579,16 @@ export const GradeMatrixTable: React.FC<GradeMatrixTableProps> = ({
                       ) +
                       1
                     }
-                    className="py-16 text-center text-slate-400 italic bg-white"
+                    className="py-14 px-4 text-center text-slate-500 bg-white"
                   >
-                    No hay estudiantes matriculados en este curso para el periodo seleccionado.
+                    <div className="max-w-md mx-auto space-y-2">
+                      <p className="font-bold text-slate-800 text-xs sm:text-sm">
+                        Actividades configuradas para este parcial. Aún no hay estudiantes matriculados para calificar.
+                      </p>
+                      <p className="text-[11px] text-slate-400 font-normal leading-relaxed">
+                        Las columnas superiores muestran las actividades académicas registradas. Una vez matriculados los estudiantes en el curso, sus casilleros se habilitarán automáticamente para ingresar notas.
+                      </p>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -708,6 +750,98 @@ export const GradeMatrixTable: React.FC<GradeMatrixTableProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Modal interactivo para reasignar actividad sin categoría a una categoría ponderada */}
+      {reassignTargetActivity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="bg-white rounded-3xl border border-slate-200 shadow-xl w-full max-w-md p-6 space-y-4"
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-900">Asignar Categoría a Actividad</h3>
+              <button
+                type="button"
+                onClick={() => setReassignTargetActivity(null)}
+                disabled={isReassigning}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div>
+              <p className="text-xs text-slate-500 mb-1">Actividad seleccionada:</p>
+              <div className="text-xs font-bold text-slate-900 bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex items-center justify-between">
+                <span>{cleanAcademicName(reassignTargetActivity.activityName)}</span>
+                <span className="text-[10px] text-slate-500 font-mono">Max: {reassignTargetActivity.maxScore} pts</span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Seleccione la categoría de destino *:
+              </label>
+              {categoriesList.filter((c) => c.categoryId > 0).length === 0 ? (
+                <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 p-2.5 rounded-xl font-medium">
+                  No hay categorías ponderadas configuradas en este esquema. Debe configurar primero las ponderaciones de la materia.
+                </p>
+              ) : (
+                <select
+                  value={selectedNewCategoryId}
+                  onChange={(e) => setSelectedNewCategoryId(e.target.value)}
+                  disabled={isReassigning}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition cursor-pointer"
+                >
+                  <option value="" disabled>Seleccione categoría ponderada ▼</option>
+                  {categoriesList
+                    .filter((c) => c.categoryId > 0)
+                    .map((c) => (
+                      <option key={c.categoryId} value={String(c.categoryId)}>
+                        {c.categoryName} ({c.weightPercentage}%)
+                      </option>
+                    ))}
+                </select>
+              )}
+            </div>
+
+            <p className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200/60">
+              ℹ️ Al asignar la categoría, las calificaciones registradas de todos los estudiantes se conservarán intactas y se incorporarán automáticamente al cálculo ponderado del parcial.
+            </p>
+
+            <div className="pt-2 flex justify-end gap-2.5 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setReassignTargetActivity(null)}
+                disabled={isReassigning}
+                className="px-3.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={!selectedNewCategoryId || isReassigning || categoriesList.filter((c) => c.categoryId > 0).length === 0}
+                onClick={async () => {
+                  if (!selectedNewCategoryId || !onReassignCategory) return;
+                  setIsReassigning(true);
+                  try {
+                    await onReassignCategory(reassignTargetActivity.activityId, Number(selectedNewCategoryId));
+                    setReassignTargetActivity(null);
+                  } finally {
+                    setIsReassigning(false);
+                  }
+                }}
+                className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold disabled:opacity-50 transition cursor-pointer"
+              >
+                {isReassigning ? 'Asignando...' : 'Asignar categoría'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+

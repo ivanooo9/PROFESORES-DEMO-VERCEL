@@ -30,9 +30,10 @@ import { ActivityFormModal } from '../activities/ActivityFormModal';
 import { EvaluationSchemeModal } from './EvaluationSchemeModal';
 import { GradeMatrixTable } from './GradeMatrixTable';
 import { academicApi } from '../../services/api/academicApi';
-import { Organization } from '../../services/api/organizationApi';
+import { Organization, UserSession } from '../../services/api/organizationApi';
 
 export interface GradesViewProps {
+  currentUser?: UserSession | null;
   organization?: Organization | null;
   students: Student[];
   grades: GradeItem[];
@@ -65,7 +66,9 @@ function cleanAcademicName(name: string): string {
   return name.replace(/\s*(Test\s*)?\d{6,}\b/gi, '').trim();
 }
 
+
 export const GradesView: React.FC<GradesViewProps> = ({
+  currentUser,
   organization,
   students,
   onAddGrade,
@@ -141,6 +144,8 @@ export const GradesView: React.FC<GradesViewProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
   const [isSchemeModalOpen, setIsSchemeModalOpen] = useState(false);
+  const [showSchemeRequiredModal, setShowSchemeRequiredModal] = useState(false);
+  const [showTeacherNoPermissionModal, setShowTeacherNoPermissionModal] = useState(false);
 
   // 1. Cargar Periodos Académicos de la Organización
   useEffect(() => {
@@ -308,6 +313,15 @@ export const GradesView: React.FC<GradesViewProps> = ({
   const parcialActivities = useMemo<ParcialActivityItem[]>(() => {
     if (!isContextComplete || !selectedParcialId) return [];
 
+    if (matrixData?.activities && matrixData.activities.length > 0) {
+      return matrixData.activities.map((a) => ({
+        id: String(a.id),
+        name: a.name,
+        maxScore: a.maxScore || 10,
+        categoryName: a.categoryName,
+      }));
+    }
+
     if (matrixData && matrixData.students.length > 0) {
       const actMap = new Map<number, ParcialActivityItem>();
       for (const st of matrixData.students) {
@@ -355,14 +369,32 @@ export const GradesView: React.FC<GradesViewProps> = ({
 
   // Categorías disponibles del esquema activo para asociar actividades
   const availableCategories = useMemo<AcademicEvaluationCategory[]>(() => {
-    if (!matrixData || matrixData.students.length === 0) return [];
-    return matrixData.students[0].categories.map((c, idx) => ({
-      id: c.categoryId,
-      evaluationSchemeId: matrixData.scheme?.id || 0,
-      name: c.categoryName,
-      weightPercentage: c.weightPercentage,
-      order: idx + 1,
-    }));
+    if (matrixData?.scheme?.categories && matrixData.scheme.categories.length > 0) {
+      return matrixData.scheme.categories;
+    }
+    if (matrixData?.categories && matrixData.categories.length > 0) {
+      return matrixData.categories
+        .filter((c) => c.categoryId > 0)
+        .map((c, idx) => ({
+          id: c.categoryId,
+          evaluationSchemeId: matrixData.scheme?.id || 0,
+          name: c.categoryName,
+          weightPercentage: c.weightPercentage,
+          order: idx + 1,
+        }));
+    }
+    if (matrixData && matrixData.students.length > 0) {
+      return matrixData.students[0].categories
+        .filter((c) => c.categoryId > 0)
+        .map((c, idx) => ({
+          id: c.categoryId,
+          evaluationSchemeId: matrixData.scheme?.id || 0,
+          name: c.categoryName,
+          weightPercentage: c.weightPercentage,
+          order: idx + 1,
+        }));
+    }
+    return [];
   }, [matrixData]);
 
   // Verificar si ya existe una Evaluación Parcial creada para este curso, materia y parcial
@@ -393,6 +425,49 @@ export const GradesView: React.FC<GradesViewProps> = ({
       );
   }, [matrixData, activities, selectedCourseId, selectedSubjectId, selectedParcialId, availableCategories]);
 
+  // Permisos: Administrador Global, Admin/Owner de Organización o Docente Asignado a la Materia
+  const isGlobalAdmin = currentUser?.role === 'ADMIN';
+  const isOrgAdmin = organization?.role === 'OWNER' || organization?.role === 'ADMIN';
+  const isAssignedTeacher = Boolean(
+    selectedSubject?.teacherUserId &&
+    currentUser?.id &&
+    String(selectedSubject.teacherUserId) === String(currentUser.id)
+  );
+  const canManageScheme = Boolean(isGlobalAdmin || isOrgAdmin || isAssignedTeacher);
+
+  // Apertura controlada de creación de actividades: Exige esquema VALID antes de abrir formulario
+  const handleOpenCreateActivity = () => {
+    const hasValidScheme =
+      Boolean(matrixData?.scheme) &&
+      matrixData?.scheme?.status === 'VALID' &&
+      availableCategories.length > 0;
+
+    if (!hasValidScheme) {
+      if (canManageScheme) {
+        setShowSchemeRequiredModal(true);
+      } else {
+        setShowTeacherNoPermissionModal(true);
+      }
+      return;
+    }
+
+    setIsActivityModalOpen(true);
+  };
+
+  // Reasignación transaccional de actividades huérfanas a categorías ponderadas
+  const handleReassignActivityCategory = async (activityId: number, targetCategoryId: number) => {
+    if (!orgId) return;
+    try {
+      await academicApi.updateActivity(orgId, activityId, { categoryId: targetCategoryId });
+      await fetchMatrix();
+      if (onReloadAcademicData) {
+        await onReloadAcademicData();
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error al reasignar categoría.');
+    }
+  };
+
   return (
     <div className="space-y-5">
       {/* 1. CARD PRINCIPAL: SELECTOR DE CONTEXTO EN CASCADA */}
@@ -416,7 +491,7 @@ export const GradesView: React.FC<GradesViewProps> = ({
           {isContextComplete && selectedCourse && selectedSubject && selectedParcial && (
             <button
               onClick={() => setIsSchemeModalOpen(true)}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-indigo-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition cursor-pointer"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-indigo-600 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl transition"
               title="Configurar categorías y ponderaciones del esquema de evaluación"
             >
               <Sliders className="w-3.5 h-3.5 text-indigo-500" />
@@ -624,13 +699,45 @@ export const GradesView: React.FC<GradesViewProps> = ({
             </div>
           )}
 
+          {/* Advertencia si no existe esquema de evaluación configurado */}
+          {!isMatrixLoading && !matrixData?.scheme && (
+            <div className="px-4 py-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                <div>
+                  <p className="font-bold">Esquema de evaluación no configurado para este periodo.</p>
+                  <p className="text-amber-700 text-[11px]">
+                    Para clasificar y ponderar notas adecuadamente (tareas, lecciones, examen), configure las ponderaciones antes de calificar.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsSchemeModalOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs inline-flex items-center gap-1.5 transition shrink-0 shadow-2xs cursor-pointer"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span>Configurar ponderaciones</span>
+              </button>
+            </div>
+          )}
+
+          {/* Advertencia si la materia no tiene docente asignado */}
+          {selectedSubject && (!selectedSubject.teacherUserId || selectedSubject.teacherName === 'Sin asignar') && (
+            <div className="px-3.5 py-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-700 text-xs flex items-center gap-2 font-medium">
+              <AlertCircle className="w-4 h-4 text-slate-500 shrink-0" />
+              <span>
+                <strong>Docente no asignado:</strong> Esta materia no tiene un docente titular registrado. Solo administradores institucionales pueden crear actividades y asentar calificaciones.
+              </span>
+            </div>
+          )}
+
           {/* Barra de Acciones Principales */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             {/* Switcher de Vistas */}
             <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl">
               <button
                 onClick={() => setActiveMode('matrix')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
                   activeMode === 'matrix'
                     ? 'bg-white text-emerald-700 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -641,7 +748,7 @@ export const GradesView: React.FC<GradesViewProps> = ({
               </button>
               <button
                 onClick={() => setActiveMode('activities')}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
                   activeMode === 'activities'
                     ? 'bg-white text-emerald-700 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -655,7 +762,7 @@ export const GradesView: React.FC<GradesViewProps> = ({
             {/* Acciones Secundarias y Principales */}
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setIsActivityModalOpen(true)}
+                onClick={handleOpenCreateActivity}
                 disabled={selectedParcial?.status !== 'ACTIVE' || isFuturePeriod}
                 className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition shadow-xs flex items-center gap-2 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed cursor-pointer"
                 title={
@@ -680,6 +787,8 @@ export const GradesView: React.FC<GradesViewProps> = ({
               isSaving={isMatrixSaving}
               onSaveGrades={handleSaveMatrixGrades}
               isReadOnly={isReadOnlyPeriod}
+              onReassignCategory={handleReassignActivityCategory}
+              canManageScheme={canManageScheme}
             />
           )}
 
@@ -706,7 +815,7 @@ export const GradesView: React.FC<GradesViewProps> = ({
                   {selectedParcial?.status === 'ACTIVE' && !isFuturePeriod && (
                     <button
                       onClick={() => setIsActivityModalOpen(true)}
-                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs inline-flex items-center gap-1.5 transition shadow-xs cursor-pointer"
+                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs inline-flex items-center gap-1.5 transition shadow-xs"
                     >
                       <Plus className="w-4 h-4" />
                       <span>Crear actividad</span>
@@ -738,7 +847,7 @@ export const GradesView: React.FC<GradesViewProps> = ({
 
                       <button
                         onClick={() => setActiveMode('matrix')}
-                        className="w-full py-1.5 px-3 rounded-lg bg-white border border-slate-200 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-700 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                        className="w-full py-1.5 px-3 rounded-lg bg-white border border-slate-200 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-700 text-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5"
                       >
                         <Edit3 className="w-3.5 h-3.5 text-emerald-600" />
                         <span>Ingresar notas</span>
@@ -782,6 +891,7 @@ export const GradesView: React.FC<GradesViewProps> = ({
               ? `${selectedQuimester ? cleanAcademicName(selectedQuimester.name) + ' · ' : ''}${cleanAcademicName(selectedParcial.name)}`
               : undefined
           }
+          selectedPeriod={selectedParcial}
           hasExamActivity={hasExamActivity}
           onSave={async (newAct) => {
             const ok = await onAddActivity({
@@ -809,6 +919,75 @@ export const GradesView: React.FC<GradesViewProps> = ({
             await fetchMatrix();
           }}
         />
+      )}
+
+      {/* Modal 1: Ponderaciones requeridas antes de crear actividades (Docente titular o Admin con permisos) */}
+      {showSchemeRequiredModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div role="dialog" aria-modal="true" className="bg-white rounded-3xl border border-slate-200 shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-amber-100 text-amber-700 rounded-2xl">
+                <Sliders className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Ponderaciones requeridas</h3>
+                <p className="text-xs text-slate-500">Configure los criterios de evaluación antes de continuar.</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed bg-amber-50/70 p-3 rounded-2xl border border-amber-200/80">
+              Esta materia aún no tiene un esquema de evaluación válido para este parcial. Es obligatorio configurar primero las ponderaciones (ej. Tareas, Lecciones, Examen) sumando el 100% para poder clasificar las actividades académicas.
+            </p>
+            <div className="pt-2 flex justify-end gap-2.5 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowSchemeRequiredModal(false)}
+                className="px-3.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSchemeRequiredModal(false);
+                  setIsSchemeModalOpen(true);
+                }}
+                className="px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span>Configurar ponderaciones ahora</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: Ponderaciones requeridas sin permisos (Docente ajeno o materia sin docente asignado) */}
+      {showTeacherNoPermissionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+          <div role="dialog" aria-modal="true" className="bg-white rounded-3xl border border-slate-200 shadow-xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-rose-100 text-rose-700 rounded-2xl">
+                <Lock className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Configuración restringida</h3>
+                <p className="text-xs text-slate-500">Esquema de evaluación pendiente.</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed bg-rose-50/70 p-3 rounded-2xl border border-rose-200/80">
+              Esta materia no tiene un esquema de ponderaciones configurado para este periodo. Al no figurar como docente titular de la materia, debe solicitar a un administrador institucional que configure las ponderaciones antes de crear actividades.
+            </p>
+            <div className="pt-2 flex justify-end border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowTeacherNoPermissionModal(false)}
+                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition cursor-pointer"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

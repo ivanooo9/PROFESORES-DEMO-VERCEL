@@ -22,6 +22,8 @@ import {
   ClassSession,
   Course,
   Enrollment,
+  EnrollmentResult,
+  ClassActionContext,
   GradeDraft,
   GradeItem,
   NavigationTab,
@@ -429,17 +431,22 @@ export function App() {
   };
 
   const handleAddEnrollment = async (
-    studentId: string,
+    studentIds: string[] | string,
     courseId: string,
     academicYearId?: string | null
-  ) => {
+  ): Promise<EnrollmentResult | void> => {
     if (!activeOrganization) {
       throw new Error('Selecciona una institución antes de matricular.');
     }
+    const ids = Array.isArray(studentIds) ? studentIds : [studentIds];
+    if (ids.length === 0) {
+      throw new Error('Selecciona al menos un estudiante para matricular.');
+    }
+
     try {
-      const newEnrollment = await academicApi.enrollStudent(
+      const res = await academicApi.enrollStudent(
         activeOrganization.id,
-        studentId,
+        Array.isArray(studentIds) ? studentIds : ids[0],
         courseId,
         undefined,
         academicYearId
@@ -450,19 +457,43 @@ export function App() {
         academicApi.getCourses(activeOrganization.id),
         academicApi.getStudents(activeOrganization.id),
       ]);
-      if (enrollmentsResult.status === 'fulfilled') {
-        setEnrollments(enrollmentsResult.value);
-      } else {
-        setEnrollments((prev) => [newEnrollment, ...prev.filter((e) => e.id !== newEnrollment.id)]);
-      }
+      if (enrollmentsResult.status === 'fulfilled') setEnrollments(enrollmentsResult.value);
       if (coursesResult.status === 'fulfilled') setCourses(coursesResult.value);
       if (studentsResult.status === 'fulfilled') setStudents(studentsResult.value);
-      if (coursesResult.status === 'rejected' || studentsResult.status === 'rejected') {
-        setApiError('La matrícula se guardó, pero no se pudieron actualizar todos los datos visibles. Recarga la información.');
+
+      if (Array.isArray(studentIds)) {
+        return res as EnrollmentResult;
       }
     } catch (err: any) {
-      throw new Error(err.message || 'Error al matricular al estudiante.');
+      throw new Error(err.message || 'Error al procesar la matrícula.');
     }
+  };
+
+  const handleOpenDashboardAttendance = (context?: ClassActionContext) => {
+    if (context?.courseId) {
+      const courseExists = courses.some((c) => String(c.id) === String(context.courseId));
+      if (courseExists) {
+        openQuickAttendance({
+          courseId: context.courseId,
+          subjectId: context.subjectId,
+          sessionId: context.sessionId,
+          date: getLocalDateString(),
+        });
+        return;
+      }
+    }
+    openQuickAttendance(null);
+  };
+
+  const handleOpenDashboardGrade = (context?: ClassActionContext) => {
+    if (context?.courseId) {
+      const courseExists = courses.some((c) => String(c.id) === String(context.courseId));
+      if (courseExists) {
+        setActiveTab('grades');
+        return;
+      }
+    }
+    setActiveTab('grades');
   };
 
   // Handlers F2 (Asistencia y Sesiones conectadas a API)
@@ -762,8 +793,8 @@ export function App() {
           {activeTab === 'dashboard' && (
             <TeacherDashboard
               onNavigate={(tab) => setActiveTab(tab)}
-              onOpenQuickAttendance={() => openQuickAttendance()}
-              onOpenQuickGrade={() => setActiveTab('grades')}
+              onOpenQuickAttendance={handleOpenDashboardAttendance}
+              onOpenQuickGrade={handleOpenDashboardGrade}
               onOpenNewStudentModal={() => setIsNewStudentModalOpen(true)}
               students={students}
               courses={courses}
@@ -771,6 +802,7 @@ export function App() {
               grades={grades}
               dashboardData={dashboardData}
               currentUser={currentUser}
+              isLoading={isDataLoading}
             />
           )}
 
@@ -824,6 +856,7 @@ export function App() {
           {/* Tab 5: Calificaciones */}
           {activeTab === 'grades' && (
             <GradesView
+              currentUser={currentUser}
               organization={activeOrganization}
               students={students}
               grades={grades}

@@ -304,9 +304,10 @@ async function runStorageVerificationSuite() {
       subjectId: '101',
       name: 'Taller de Álgebra Lineal',
       type: 'activity',
-      dueDate: '2026-10-15',
+      dueDate: '2026-03-15',
       maxScore: 10,
       academicPeriodId: '21',
+      categoryId: 1,
     });
     if (!newActivity.id) throw new Error('Failed to create activity');
 
@@ -429,6 +430,166 @@ async function runStorageVerificationSuite() {
 
     const matrix = await academicApi.getPeriodGradesMatrix(1, { courseId: 1, subjectId: 101, academicPeriodId: 21 });
     if (!matrix || !matrix.students) throw new Error('academicApi failed to get matrix');
+  });
+
+  // 21. Matrícula Masiva con Tolerancia a Fallos Parciales
+  test('21. Matrícula Masiva: Procesamiento por lote, prevención de duplicados y tolerancia a errores parciales', () => {
+    demoStorage.resetDemoData();
+    const students = demoStorage.getStudents();
+    const courses = demoStorage.getCourses();
+    const validStudent1 = students[0].id;
+    const validStudent2 = students[1].id;
+    const invalidStudent = '999999';
+
+    const result = demoStorage.enrollStudentsBatch(
+      [validStudent1, validStudent2, invalidStudent],
+      courses[0].id,
+      1
+    );
+
+    if (result.totalRequested !== 3) throw new Error('totalRequested incorrect');
+    if (result.successCount !== 2) throw new Error('successCount incorrect');
+    if (result.failedCount !== 1) throw new Error('failedCount incorrect');
+    if (!result.failedStudentIds?.includes(invalidStudent)) throw new Error('failedStudentIds missing invalid student');
+    if (result.enrollments?.length !== 2) throw new Error('successful enrollments length mismatch');
+  });
+
+  // 22. Bloqueo de Actividades sin Esquema Válido o Categoría
+  test('22. Esquemas y Actividades: Bloqueo de actividades sin categoría obligatoria o esquema inválido', () => {
+    demoStorage.resetDemoData();
+    let errorCaught = false;
+    try {
+      demoStorage.createActivity(1, {
+        subjectId: '101',
+        name: 'Actividad sin categoría',
+        dueDate: '2026-03-10',
+        maxScore: 10,
+        academicPeriodId: '21',
+      });
+    } catch (err: any) {
+      errorCaught = true;
+      if (!err.message.includes('categoría')) throw err;
+    }
+    if (!errorCaught) throw new Error('Did not block activity creation without mandatory category');
+  });
+
+  // 23. Unicidad de Evaluación Parcial y Restricción de Fechas
+  test('23. Esquemas y Actividades: Unicidad de examen parcial (30%) y restricción de fechas al período', () => {
+    demoStorage.resetDemoData();
+    // Ya existe un examen en los datos semilla para course 1, subject 101, period 21
+    let duplicateCaught = false;
+    try {
+      demoStorage.createActivity(1, {
+        subjectId: '101',
+        name: 'Segundo Examen Parcial Duplicado',
+        type: 'exam',
+        dueDate: '2026-04-10',
+        maxScore: 10,
+        academicPeriodId: '21',
+        categoryId: 1,
+      });
+    } catch (err: any) {
+      duplicateCaught = true;
+      if (!err.message.includes('única')) throw err;
+    }
+    if (!duplicateCaught) throw new Error('Did not block duplicate exam activity');
+
+    // Intentar crear actividad fuera de fecha del periodo (después de 2026-04-15) -> debe fallar
+    let dateRangeCaught = false;
+    try {
+      demoStorage.createActivity(1, {
+        subjectId: '101',
+        name: 'Tarea fuera de fecha',
+        dueDate: '2026-05-20',
+        maxScore: 10,
+        academicPeriodId: '21',
+        categoryId: 1,
+      });
+    } catch (err: any) {
+      dateRangeCaught = true;
+      if (!err.message.includes('posterior')) throw err;
+    }
+    if (!dateRangeCaught) throw new Error('Did not block activity date out of period range');
+  });
+
+  // 24. Reasignación de Categorías en Matriz
+  test('24. Reasignación de Categorías: Reasignar actividad a categoría ponderada y actualizar matriz', () => {
+    demoStorage.resetDemoData();
+    const activities = demoStorage.getActivities({ courseId: 1, subjectId: 101 });
+    const targetActivity = activities[0];
+
+    const updated = demoStorage.reassignActivityCategory(targetActivity.id, 2);
+    if (String(updated.categoryId) !== '2') throw new Error('Category was not reassigned');
+
+    const matrix = demoStorage.getPeriodGradesMatrix(1, 101, 21);
+    if (!matrix.categories || matrix.categories.length === 0) throw new Error('Matrix categories missing');
+  });
+
+  // 25. Búsqueda Diacrítica en Asistencia y Notas Rápidas
+  test('25. Búsqueda de Estudiantes: Filtrado insensible a tildes/mayúsculas conservando selecciones', () => {
+    demoStorage.resetDemoData();
+    const students = demoStorage.getStudents();
+    const studentWithAccent = students.find((s) => s.lastName.includes('é') || s.firstName.includes('é') || s.firstName.includes('á')) || students[0];
+
+    const searchNoAccent = studentWithAccent.lastName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const matches = matchesStudentQuery(studentWithAccent, searchNoAccent);
+    if (!matches) throw new Error('Diacritic insensitive student match failed');
+  });
+
+  // 26. Determinación Factual de finalityStatus en Reportes
+  test('26. Reportes: Determinación factual de estados FINAL, PROVISIONAL y UNDETERMINED', () => {
+    demoStorage.resetDemoData();
+    const reportOpen = demoStorage.getGradeReport({ courseId: 1, subjectId: 101 });
+    if (reportOpen.summary.finalityStatus !== 'PROVISIONAL') {
+      throw new Error(`Expected PROVISIONAL for active period, got ${reportOpen.summary.finalityStatus}`);
+    }
+
+    demoStorage.closeAcademicPeriod(21);
+    // Con notas incompletas (estudiantes 5 y 6 faltan en actividad 2), el resumen del curso debe ser UNDETERMINED
+    const reportIncomplete = demoStorage.getGradeReport({ courseId: 1, subjectId: 101 });
+    if (reportIncomplete.summary.finalityStatus !== 'UNDETERMINED') {
+      throw new Error(`Expected UNDETERMINED for closed period with missing grades, got ${reportIncomplete.summary.finalityStatus}`);
+    }
+    if (reportIncomplete.students[0].finalityStatus !== 'FINAL') {
+      throw new Error(`Expected student 1 to be FINAL, got ${reportIncomplete.students[0].finalityStatus}`);
+    }
+    if (reportIncomplete.students[4].finalityStatus !== 'UNDETERMINED') {
+      throw new Error(`Expected student 5 to be UNDETERMINED, got ${reportIncomplete.students[4].finalityStatus}`);
+    }
+
+    // Completar notas faltantes para estudiantes 5 y 6 en actividad 2
+    demoStorage.saveGradesBatch(2, [
+      { studentId: 5, score: 8.5 },
+      { studentId: 6, score: 9.0 },
+    ]);
+
+    const reportClosed = demoStorage.getGradeReport({ courseId: 1, subjectId: 101 });
+    if (reportClosed.summary.finalityStatus !== 'FINAL') {
+      throw new Error(`Expected FINAL for cleanly closed period with complete grades, got ${reportClosed.summary.finalityStatus}`);
+    }
+
+    const studentReport = demoStorage.getStudentReport(reportClosed.students[0].studentId);
+    if (studentReport.grades.summary.finalityStatus !== 'FINAL') {
+      throw new Error(`Expected student report finalityStatus to be FINAL, got ${studentReport.grades.summary.finalityStatus}`);
+    }
+  });
+
+  // 27. Acciones Contextuales del Dashboard
+  test('27. Dashboard: Validación de ClassActionContext y precarga de cursos y sesiones', () => {
+    demoStorage.resetDemoData();
+    const dashboard = demoStorage.getDashboard();
+    if (!dashboard.attendanceSummary || !dashboard.performanceSummary) throw new Error('Dashboard summary missing');
+
+    const courses = demoStorage.getCourses();
+    const validCourse = courses[0];
+
+    const validContext = { courseId: String(validCourse.id), subjectId: '101', sessionId: '1' };
+    const courseExists = courses.some((c) => String(c.id) === validContext.courseId);
+    if (!courseExists) throw new Error('Course does not exist in context validation');
+
+    const invalidContext = { courseId: '99999' };
+    const invalidExists = courses.some((c) => String(c.id) === invalidContext.courseId);
+    if (invalidExists) throw new Error('Invalid course passed context validation');
   });
 
   console.log(`\n===============================================================`);

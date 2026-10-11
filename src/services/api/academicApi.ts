@@ -6,6 +6,7 @@ import {
   ClassSession,
   Course,
   Enrollment,
+  EnrollmentResult,
   EvaluationType,
   GradeItem,
   Student,
@@ -665,13 +666,43 @@ export const academicApi = {
 
   async enrollStudent(
     orgId: number,
-    studentId: number | string,
+    studentId: (number | string)[] | number | string,
     courseId: number | string,
     period?: string | null,
     academicYearId?: number | string | null
-  ): Promise<Enrollment> {
+  ): Promise<any> {
     if (isDemo) {
       return academicDemoService.enrollStudent(orgId, studentId, courseId, period, academicYearId);
+    }
+    if (Array.isArray(studentId)) {
+      const results = await Promise.allSettled(
+        studentId.map((sId) =>
+          apiClient.post<any>(`/api/organizations/${orgId}/academic/enrollments`, {
+            studentId: Number(sId),
+            courseId: Number(courseId),
+            period: period || undefined,
+            academicYearId: academicYearId ? Number(academicYearId) : undefined,
+          })
+        )
+      );
+      const errors: { studentId: string; error: string }[] = [];
+      const successful: Enrollment[] = [];
+      results.forEach((res, i) => {
+        if (res.status === 'fulfilled' && res.value.success && res.value.data) {
+          successful.push(mapEnrollment(res.value.data));
+        } else {
+          errors.push({ studentId: String(studentId[i]), error: 'Error al matricular' });
+        }
+      });
+      return {
+        success: errors.length === 0,
+        totalRequested: studentId.length,
+        successCount: successful.length,
+        failedCount: errors.length,
+        failedStudentIds: errors.map((e) => e.studentId),
+        errors,
+        enrollments: successful,
+      } as EnrollmentResult;
     }
     const response = await apiClient.post<any>(
       `/api/organizations/${orgId}/academic/enrollments`,
@@ -686,6 +717,24 @@ export const academicApi = {
       throw new Error(response.error || 'Error al procesar matrícula.');
     }
     return mapEnrollment(response.data);
+  },
+
+  async reassignActivityCategory(
+    orgId: number,
+    activityId: number | string,
+    categoryId: number | string
+  ): Promise<Activity> {
+    if (isDemo) {
+      return academicDemoService.reassignActivityCategory(orgId, activityId, categoryId);
+    }
+    const response = await apiClient.patch<any>(
+      `/api/organizations/${orgId}/academic/activities/${activityId}/category`,
+      { categoryId: Number(categoryId) }
+    );
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Error al reasignar categoría de actividad.');
+    }
+    return mapActivity(response.data);
   },
 
   async updateEnrollmentStatus(

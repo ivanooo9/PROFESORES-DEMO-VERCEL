@@ -5,6 +5,7 @@ import {
   ClassSession,
   Course,
   Enrollment,
+  EnrollmentResult,
   GradeItem,
   Student,
   Subject,
@@ -233,13 +234,25 @@ export const academicDemoService = {
 
   async enrollStudent(
     _orgId: number,
-    studentId: number | string,
+    studentId: (number | string)[] | number | string,
     courseId: number | string,
     period?: string | null,
     academicYearId?: number | string | null
-  ): Promise<Enrollment> {
+  ): Promise<EnrollmentResult | Enrollment> {
     await new Promise((resolve) => setTimeout(resolve, 50));
+    if (Array.isArray(studentId)) {
+      return demoStorage.enrollStudentsBatch(studentId, courseId, academicYearId);
+    }
     return demoStorage.enrollStudent(studentId, courseId, period, academicYearId);
+  },
+
+  async reassignActivityCategory(
+    _orgId: number,
+    activityId: number | string,
+    categoryId: number | string
+  ): Promise<Activity> {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return demoStorage.reassignActivityCategory(activityId, categoryId);
   },
 
   async updateEnrollmentStatus(

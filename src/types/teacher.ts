@@ -37,6 +37,22 @@ export interface Enrollment {
   enrollmentDate: string;
 }
 
+export interface EnrollmentResult {
+  success?: boolean;
+  totalRequested?: number;
+  successCount?: number;
+  failedCount?: number;
+  failedStudentIds?: string[];
+  errors?: { studentId: string; identification?: string; name?: string; error: string }[];
+  enrollments?: Enrollment[];
+}
+
+export interface ClassActionContext {
+  courseId?: string;
+  subjectId?: string;
+  sessionId?: string;
+}
+
 export interface Course {
   id: string;
   name: string; // e.g. "1ro A"
@@ -126,6 +142,7 @@ export interface Subject {
   courseId: string;
   courseName: string;
   teacherName: string;
+  teacherUserId?: string;
   hoursPerWeek: number;
   iconName?: string;
   scheduleStatus?: SubjectScheduleStatus;
@@ -149,7 +166,7 @@ export interface AttendanceRecord {
 
 export interface AttendanceContext {
   courseId: string;
-  subjectId: string;
+  subjectId?: string;
   date: string;
   sessionId?: string;
 }
@@ -636,7 +653,15 @@ export interface PeriodGradesMatrixDTO {
     maxScale: number;
     minPassingScore: number;
     totalCategories: number;
+    categories?: AcademicEvaluationCategory[];
   } | null;
+  categories?: PeriodGradesMatrixCategory[];
+  activities?: {
+    id: number;
+    name: string;
+    maxScore?: number;
+    categoryName?: string;
+  }[];
   totalActivities: number;
   totalStudents: number;
   isProvisional?: boolean;

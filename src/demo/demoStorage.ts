@@ -5,6 +5,7 @@ import {
   ClassSession,
   Course,
   Enrollment,
+  EnrollmentResult,
   GradeItem,
   Student,
   Subject,
@@ -858,6 +859,60 @@ export const demoStorage = {
     return newEnrollment;
   },
 
+  enrollStudentsBatch(
+    studentIds: (number | string)[],
+    courseId: number | string,
+    academicYearId?: number | string | null
+  ): EnrollmentResult {
+    this.init();
+    const students = this.getStudents();
+    const courses = this.getCourses();
+    const course = courses.find((c) => String(c.id) === String(courseId));
+    if (!course) {
+      throw new Error(`Curso no encontrado (ID: ${courseId}).`);
+    }
+
+    const successfulEnrollments: Enrollment[] = [];
+    const errors: { studentId: string; identification?: string; name?: string; error: string }[] = [];
+    const failedStudentIds: string[] = [];
+
+    for (const sId of studentIds) {
+      const studentStr = String(sId);
+      const studentObj = students.find((s) => String(s.id) === studentStr);
+      if (!studentObj) {
+        errors.push({
+          studentId: studentStr,
+          error: 'Estudiante no encontrado en el sistema.',
+        });
+        failedStudentIds.push(studentStr);
+        continue;
+      }
+
+      try {
+        const enr = this.enrollStudent(sId, courseId, null, academicYearId);
+        successfulEnrollments.push(enr);
+      } catch (err: any) {
+        errors.push({
+          studentId: studentStr,
+          identification: studentObj.identification,
+          name: `${studentObj.firstName} ${studentObj.lastName}`,
+          error: err?.message || 'Error al procesar matrícula',
+        });
+        failedStudentIds.push(studentStr);
+      }
+    }
+
+    return {
+      success: errors.length === 0,
+      totalRequested: studentIds.length,
+      successCount: successfulEnrollments.length,
+      failedCount: errors.length,
+      failedStudentIds,
+      errors,
+      enrollments: successfulEnrollments,
+    };
+  },
+
   updateEnrollmentStatus(enrollmentId: number | string, status: string): Enrollment {
     this.init();
     const list = getItem<Enrollment[]>(KEYS.ENROLLMENTS, DEMO_ENROLLMENTS);
@@ -1135,8 +1190,50 @@ export const demoStorage = {
     }
   ): Activity {
     this.init();
+    const periodId = data.academicPeriodId ? String(data.academicPeriodId) : '21';
+    const period = this.getAcademicPeriodById(periodId);
+    if (period && period.status === 'CLOSED') {
+      throw new Error('No se pueden crear actividades en un período cerrado.');
+    }
+
+    const activityDate = data.dueDate || getLocalDateString();
+    if (period?.startDate && activityDate < period.startDate) {
+      throw new Error(`La fecha de la actividad no puede ser anterior al inicio del período (${period.startDate}).`);
+    }
+    if (period?.endDate && activityDate > period.endDate) {
+      throw new Error(`La fecha de la actividad no puede ser posterior al fin del período (${period.endDate}).`);
+    }
+
     const list = getItem<Activity[]>(KEYS.ACTIVITIES, DEMO_ACTIVITIES);
+    const isExam = data.type === 'exam';
+    if (isExam) {
+      const existingExam = list.find(
+        (a) =>
+          String(a.courseId) === String(courseId) &&
+          String(a.subjectId) === String(data.subjectId) &&
+          String(a.academicPeriodId) === periodId &&
+          a.type === 'exam'
+      );
+      if (existingExam) {
+        throw new Error('Este período ya cuenta con una Evaluación Parcial única registrada.');
+      }
+    }
+
+    const schemes = this.getEvaluationSchemes({
+      courseId,
+      subjectId: data.subjectId,
+      academicPeriodId: periodId,
+    });
+    const scheme = schemes[0];
+    if (scheme && scheme.status !== 'VALID') {
+      throw new Error('La materia no cuenta con un esquema de evaluación válido para este período.');
+    }
+
     const categories = getItem<AcademicEvaluationCategory[]>(KEYS.CATEGORIES, DEMO_EVALUATION_CATEGORIES);
+    if (scheme?.categories && scheme.categories.length > 0 && !data.categoryId) {
+      throw new Error('Debe seleccionar una categoría de evaluación ponderada obligatoria.');
+    }
+
     const category = data.categoryId ? categories.find((c) => String(c.id) === String(data.categoryId)) : undefined;
 
     const newActivity: Activity = {
@@ -1145,16 +1242,44 @@ export const demoStorage = {
       subjectId: String(data.subjectId),
       name: data.name,
       type: (data.type as any) || 'homework',
-      date: data.dueDate || getLocalDateString(),
+      date: activityDate,
       maxScore: Number(data.maxScore) || 10,
-      academicPeriodId: data.academicPeriodId ? String(data.academicPeriodId) : '21',
-      evaluationSchemeId: data.evaluationSchemeId ? String(data.evaluationSchemeId) : undefined,
+      academicPeriodId: periodId,
+      evaluationSchemeId: data.evaluationSchemeId ? String(data.evaluationSchemeId) : (scheme ? String(scheme.id) : undefined),
       categoryId: data.categoryId ? String(data.categoryId) : undefined,
       categoryName: category?.name,
     };
     list.unshift(newActivity);
     setItem(KEYS.ACTIVITIES, list);
     return newActivity;
+  },
+
+  reassignActivityCategory(
+    activityId: number | string,
+    categoryId: number | string
+  ): Activity {
+    this.init();
+    const list = getItem<Activity[]>(KEYS.ACTIVITIES, DEMO_ACTIVITIES);
+    const index = list.findIndex((a) => String(a.id) === String(activityId));
+    if (index === -1) throw new Error('Actividad no encontrada.');
+
+    const activity = list[index];
+    const period = this.getAcademicPeriodById(activity.academicPeriodId || '21');
+    if (period && period.status === 'CLOSED') {
+      throw new Error('No se puede modificar una actividad en un período cerrado.');
+    }
+
+    const categories = getItem<AcademicEvaluationCategory[]>(KEYS.CATEGORIES, DEMO_EVALUATION_CATEGORIES);
+    const category = categories.find((c) => String(c.id) === String(categoryId));
+    if (!category) throw new Error('Categoría de evaluación no encontrada.');
+
+    list[index] = {
+      ...activity,
+      categoryId: String(categoryId),
+      categoryName: category.name,
+    };
+    setItem(KEYS.ACTIVITIES, list);
+    return list[index];
   },
 
   updateActivity(
@@ -1450,6 +1575,10 @@ export const demoStorage = {
 
   changeAcademicPeriodStatus(periodId: number | string, status: AcademicPeriodStatus): AcademicPeriod {
     return this.updateAcademicPeriod(periodId, { status });
+  },
+
+  closeAcademicPeriod(periodId: number | string): AcademicPeriod {
+    return this.changeAcademicPeriodStatus(periodId, 'CLOSED');
   },
 
   getPeriodClosureReadiness(periodId: number | string): PeriodClosureReadinessDTO {
@@ -1850,8 +1979,29 @@ export const demoStorage = {
             maxScale: scheme.maxScale,
             minPassingScore: scheme.minPassingScore,
             totalCategories: categories.length,
+            categories: scheme.categories || [],
           }
         : null,
+      categories: categories.map((cat) => ({
+        categoryId: Number(cat.id),
+        categoryName: cat.name,
+        weightPercentage: cat.weightPercentage,
+        isEvaluated: true,
+        activitiesCount: activities.filter((a) => String(a.categoryId) === String(cat.id)).length,
+        gradedCount: 0,
+        categoryAverage: null,
+        weightedContribution: 0,
+        activities: [],
+      })),
+      activities: activities.map((a) => {
+        const cat = categories.find((c) => String(c.id) === String(a.categoryId));
+        return {
+          id: Number(a.id),
+          name: a.name,
+          maxScore: a.maxScore,
+          categoryName: cat?.name,
+        };
+      }),
       totalActivities: activities.length,
       totalStudents: targetEnrollments.length,
       isProvisional: matrixStudents.some((s) => s.isProvisional),
@@ -2088,6 +2238,10 @@ export const demoStorage = {
       dueDate: a.date,
     }));
 
+    const periods = this.getAcademicPeriods();
+    const periodIds = Array.from(new Set(activities.map((a) => a.academicPeriodId).filter(Boolean)));
+    const relevantPeriods = periods.filter((p) => periodIds.includes(String(p.id)));
+
     const studentItems = enrollments.map((e) => {
       const st = students.find((s) => String(s.id) === String(e.studentId));
       const studentGrades = activities.map((act) => {
@@ -2112,6 +2266,16 @@ export const demoStorage = {
         : null;
       const normalizedPerformance = simpleAverage !== null ? Number(((simpleAverage / 10) * 100).toFixed(1)) : null;
 
+      let studentFinality: 'FINAL' | 'PROVISIONAL' | 'UNDETERMINED' = 'PROVISIONAL';
+      if (relevantPeriods.length === 0 || activities.length === 0) {
+        studentFinality = 'UNDETERMINED';
+      } else if (relevantPeriods.some((p) => p.status !== 'CLOSED')) {
+        studentFinality = 'PROVISIONAL';
+      } else {
+        const isFullyGraded = gradedList.length === activities.length && activities.length > 0;
+        studentFinality = isFullyGraded ? 'FINAL' : 'UNDETERMINED';
+      }
+
       return {
         studentId: Number(e.studentId),
         firstName: st?.firstName || '',
@@ -2122,7 +2286,7 @@ export const demoStorage = {
         gradedActivitiesCount: gradedList.length,
         simpleAverage,
         normalizedPerformance,
-        finalityStatus: 'PROVISIONAL',
+        finalityStatus: studentFinality,
         grades: studentGrades,
       };
     });
@@ -2132,6 +2296,16 @@ export const demoStorage = {
       ? Number((allScores.reduce((sum, g) => sum + (g.score || 0), 0) / allScores.length).toFixed(1))
       : null;
     const overallNormalizedPerformance = overallAverage !== null ? Number(((overallAverage / 10) * 100).toFixed(1)) : null;
+
+    let summaryFinality: 'FINAL' | 'PROVISIONAL' | 'UNDETERMINED' = 'PROVISIONAL';
+    if (relevantPeriods.length === 0 || activityItems.length === 0) {
+      summaryFinality = 'UNDETERMINED';
+    } else if (relevantPeriods.some((p) => p.status !== 'CLOSED')) {
+      summaryFinality = 'PROVISIONAL';
+    } else {
+      const allFinal = studentItems.length > 0 && studentItems.every((s) => s.finalityStatus === 'FINAL');
+      summaryFinality = allFinal ? 'FINAL' : 'UNDETERMINED';
+    }
 
     return {
       course: course ? { id: Number(course.id), name: course.name, level: course.level } : null,
@@ -2144,8 +2318,8 @@ export const demoStorage = {
         totalGradesRecorded: allScores.length,
         overallAverage,
         overallNormalizedPerformance,
-        isProvisional: true,
-        finalityStatus: 'PROVISIONAL',
+        isProvisional: summaryFinality !== 'FINAL',
+        finalityStatus: summaryFinality,
       },
       generatedAt: new Date().toISOString(),
     };
@@ -2162,6 +2336,7 @@ export const demoStorage = {
     const attendance = this.getAttendanceHistory({ studentId });
     const grades = this.getGradesHistory({ studentId });
     const activities = this.getActivities();
+    const periods = this.getAcademicPeriods();
 
     const enrollmentDTOs = enrollments.map((e) => {
       const c = courses.find((crs) => String(crs.id) === String(e.courseId));
@@ -2204,6 +2379,19 @@ export const demoStorage = {
       const act = activities.find((a) => String(a.id) === String(g.evaluationId));
       const c = courses.find((crs) => String(crs.id) === String(g.courseId));
       const s = subjects.find((sub) => String(sub.id) === String(g.subjectId));
+      const p = act?.academicPeriodId ? periods.find((per) => String(per.id) === String(act.academicPeriodId)) : null;
+
+      let gradeFinality: 'FINAL' | 'PROVISIONAL' | 'UNDETERMINED' = 'PROVISIONAL';
+      if (!p) {
+        gradeFinality = 'UNDETERMINED';
+      } else if (p.status !== 'CLOSED') {
+        gradeFinality = 'PROVISIONAL';
+      } else if (g.score !== null && g.score !== undefined) {
+        gradeFinality = 'FINAL';
+      } else {
+        gradeFinality = 'UNDETERMINED';
+      }
+
       return {
         id: idx + 1,
         activityId: Number(g.evaluationId || 1),
@@ -2216,9 +2404,20 @@ export const demoStorage = {
         gradedAt: g.date,
         comments: g.comments || null,
         status: g.status || 'GRADED',
-        finalityStatus: 'PROVISIONAL',
+        finalityStatus: gradeFinality,
       };
     });
+
+    let studentGradesFinality: 'FINAL' | 'PROVISIONAL' | 'UNDETERMINED' = 'PROVISIONAL';
+    if (gradesHistory.length === 0) {
+      studentGradesFinality = 'UNDETERMINED';
+    } else if (gradesHistory.some((g) => g.finalityStatus === 'PROVISIONAL')) {
+      studentGradesFinality = 'PROVISIONAL';
+    } else if (gradesHistory.every((g) => g.finalityStatus === 'FINAL')) {
+      studentGradesFinality = 'FINAL';
+    } else {
+      studentGradesFinality = 'UNDETERMINED';
+    }
 
     return {
       student: {
@@ -2250,7 +2449,7 @@ export const demoStorage = {
           totalGradesCount: grades.length,
           simpleAverage,
           normalizedPerformance,
-          finalityStatus: 'PROVISIONAL',
+          finalityStatus: studentGradesFinality,
         },
         history: gradesHistory,
       },

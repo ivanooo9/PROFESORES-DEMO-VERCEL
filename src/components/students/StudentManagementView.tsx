@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { DataTable, Column } from '../ui/DataTable';
 import { Activity, AttendanceRecord, Course, Enrollment, GradeItem, Student, AcademicYear } from '../../types/teacher';
-import { EnrollmentModal } from './EnrollmentModal';
+import { EnrollmentModal, EnrollmentResult } from './EnrollmentModal';
 import { StudentFormModal } from './StudentFormModal';
 import { StudentDetailModal } from './StudentDetailModal';
 import { StudentImportModal } from './StudentImportModal';
@@ -26,7 +26,11 @@ export interface StudentManagementViewProps {
   courses: Course[];
   enrollments: Enrollment[];
   academicYears?: AcademicYear[];
-  onAddEnrollment: (studentId: string, courseId: string, academicYearId?: string | null) => Promise<void>;
+  onAddEnrollment: (
+    studentIds: string[] | string,
+    courseId: string,
+    academicYearId?: string | null
+  ) => Promise<EnrollmentResult | void>;
   attendanceHistory: AttendanceRecord[];
   grades: GradeItem[];
   activities: Activity[];
